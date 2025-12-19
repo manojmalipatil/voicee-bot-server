@@ -1,0 +1,12 @@
+av
+dotenv
+fastapi
+livekit-agents[deepgram,google,openai,silero,turn-detector]
+livekit-plugins-noise-cancellation
+motor
+pandas
+pymongo
+python-dotenv
+spicy
+streamlit
+uvicorn

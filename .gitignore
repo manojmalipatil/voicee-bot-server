@@ -1,0 +1,39 @@
+# Python bytecode (compiled files)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments (matches your specific folder and the standard ones)
+venv/
+venv313/
+env/
+ENV/
+
+# Distribution / Build / Packaging
+dist/
+build/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Environment variables (Sensitive secrets)
+.env
+.env.local
+.env.*.local
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Voice Bot specific (Audio/Logs)
+*.log
+logs/
+temp/
