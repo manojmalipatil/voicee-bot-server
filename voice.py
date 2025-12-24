@@ -102,25 +102,33 @@ class GrievanceBotLogic:
             return None
         
         text_lower = text.lower().strip()
-        word_count = len(text_lower.split())
+        words = text_lower.split() 
+        word_count = len(words)
         
         print(f"\n[USER SAYS] '{text}' (Words: {word_count})")
 
         # --- 1. GREETING PHASE ---
         if self.state == "greeting":
-            if any(w in text_lower for w in ["bye", "exit", "nothing", "no"]):
+            exit_triggers = ["no", "nothing", "nope", "nah", "bye", "exit"]
+            should_exit_greeting = False
+            
+            for i, w in enumerate(words):
+                clean_w = w.strip(".,!?")
+                if clean_w in exit_triggers:
+                    words_after = len(words) - 1 - i
+                    if words_after < 2:
+                        should_exit_greeting = True
+                        break
+
+            if should_exit_greeting:
                 self.state = "closing"
                 self.should_disconnect = True
                 return "closing"
             
-            # Transition to listening
             self.state = "listening"
             self.grievance_text += text
             self.grievance_timestamp = time.time()
 
-            # IMPATIENCE CHECK:
-            # If the user's *first* utterance is long (e.g. they skipped hello and went straight to the issue),
-            # we should play the probe immediately.
             if word_count > 8:
                 self.has_played_probe = True
                 print("   -> substantial opening detected, playing probe.")
@@ -132,40 +140,51 @@ class GrievanceBotLogic:
         elif self.state == "listening":
             self.grievance_text += " " + text
             
-            # A. EXIT CHECK
-            exit_words = ["done", "finished", "that's all", "that's it", "thank you", "thanks", "bye"]
-            if any(w in text_lower for w in exit_words):
-                print(f"[SAVING REPORT] {len(self.grievance_text)} chars")
-                asyncio.create_task(self._process_grievance()) # Fire and forget DB storage
-                self.state = "closing"
-                self.should_disconnect = True
-                return "closing"
+            # A. EXIT CHECK (Trailing Words Logic)
+            finish_triggers = ["done", "finished", "bye", "goodbye", "thanks", "thank you"]
+            should_exit_listening = False
 
+            # Check for phrases first (Special handling for "that's all")
+            if "that's all" in text_lower or "that is all" in text_lower:
+                # Check if it appears at or near the end
+                if text_lower.endswith("that's all") or text_lower.endswith("that is all") or \
+                   text_lower.endswith("that's all.") or text_lower.endswith("that is all."):
+                    should_exit_listening = True
+                    print("   -> Exit phrase detected: 'that's all'")
+            
+            # Check for single word triggers
+            if not should_exit_listening:
+                for i, w in enumerate(words):
+                    clean_w = w.strip(".,!?")
+                    if clean_w in finish_triggers:
+                        words_after = len(words) - 1 - i
+                        if words_after < 3:
+                            should_exit_listening = True
+                            print(f"   -> Exit trigger detected: '{clean_w}'")
+                            break
+            
+            # CRITICAL: Exit immediately if exit condition is met
+            if should_exit_listening:
+                print("   -> Exiting listening phase")
+                self._save_and_exit()
+                return "closing"
+                
             # B. NOISE FILTER
-            # Ignore tiny fragments like "um" or breath sounds (unless it's 'yes'/'no')
-            if word_count < 3 and text_lower not in ['yes', 'no', 'yeah']:
+            if word_count < 2 and text_lower not in ['yes', 'no', 'yeah']:
                 print("   -> Fragment detected. Ignoring.")
                 return None 
             
             # C. THE LOGIC SPLIT
-            
-            # Scenario 1: The "Probe" (Deep Empathy)
-            # We play this ONLY ONCE, the first time the user pauses after a real sentence.
             if not self.has_played_probe:
-                # Ensure they actually said something substantial (>4 words) before we probe
                 if word_count > 5:
                     self.has_played_probe = True
                     print("   -> Playing Empathy Probe (Once only)")
-                    return "probe_details" # "Thank you for sharing... tell me more"
+                    return "probe_details"
                 else:
-                    return None # Wait for them to say more before probing
+                    return None
 
-            # Scenario 2: The "Backchannel" (Nodding along)
-            # We've already probed. Now we just encourage them to keep going.
             else:
-                # We don't want to ack EVERY single pause (it sounds robotic).
-                # 60% chance to say "hmm", 40% chance to stay silent.
-                if random.random() < 0.7:
+                if random.random() < 0.6:
                     selected_ack = random.choice(self.ack_sounds)
                     print(f"   -> Backchanneling: {selected_ack}")
                     return selected_ack
@@ -175,10 +194,22 @@ class GrievanceBotLogic:
 
         return None
     
+    def _save_and_exit(self):
+        """Save the grievance and prepare for exit."""
+        print(f"\n{'='*60}")
+        print("[SAVING] Grievance collected")
+        print(f"Text: {self.grievance_text}")
+        print(f"{'='*60}\n")
+        
+        # Schedule async processing
+        asyncio.create_task(self._process_grievance())
+        
+        self.state = "closing"
+        self.should_disconnect = True
+    
     async def _process_grievance(self):
         """Process grievance with LLM and store in database."""
         try:
-            # Assumes 'grievance_processor' is available in global scope or passed in
             result = await grievance_processor.process_and_store(
                 transcript=self.grievance_text,
                 timestamp=self.grievance_timestamp or time.time()
