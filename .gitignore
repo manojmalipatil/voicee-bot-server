@@ -37,3 +37,6 @@ coverage.xml
 *.log
 logs/
 temp/
+
+node_modules/
+package-lock.json

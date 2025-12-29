@@ -3,7 +3,7 @@ import json
 import uuid
 from datetime import datetime
 from typing import Dict, Optional
-import google.generativeai as genai  # Changed from anthropic
+import google.generativeai as genai
 import os
 
 class GrievanceProcessor:
@@ -18,10 +18,11 @@ class GrievanceProcessor:
         self._init_database()
     
     def _init_database(self):
-        """Initialize SQLite database with grievances table."""
+        """Initialize SQLite database and ensure location column exists."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
+        # Create table if it doesn't exist
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS grievances (
                 id TEXT PRIMARY KEY,
@@ -32,16 +33,25 @@ class GrievanceProcessor:
                 sentiment TEXT,
                 summary TEXT,
                 tags TEXT,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                location TEXT
             )
         """)
+        
+        # Migration Check: Check if 'location' column exists (for existing databases)
+        cursor.execute("PRAGMA table_info(grievances)")
+        columns = [info[1] for info in cursor.fetchall()]
+        
+        if "location" not in columns:
+            print("[DB] Migrating database: Adding 'location' column...")
+            cursor.execute("ALTER TABLE grievances ADD COLUMN location TEXT")
         
         conn.commit()
         conn.close()
         print(f"[DB] Database initialized at {self.db_path}")
     
     async def categorize_grievance(self, transcript: str) -> Dict:
-        """Use Gemini to categorize and analyze the grievance."""
+        """Use Gemini to categorize, analyze, and extract location."""
         prompt = f"""Analyze this customer grievance and provide a structured categorization.
 
 Grievance transcript:
@@ -53,6 +63,7 @@ Please provide:
 3. Sentiment (Positive, Neutral, Negative, Very Negative)
 4. Brief Summary (1-2 sentences)
 5. Tags (up to 5 relevant keywords)
+6. Location (Extract the specific branch, city, or office location mentioned. If NO location is found, return "Undisclosed Location")
 
 Respond strictly in JSON format:
 {{
@@ -60,7 +71,8 @@ Respond strictly in JSON format:
     "priority": "...",
     "sentiment": "...",
     "summary": "...",
-    "tags": ["tag1", "tag2", "tag3"]
+    "tags": ["tag1", "tag2"],
+    "location": "..."
 }}"""
 
         try:
@@ -73,7 +85,12 @@ Respond strictly in JSON format:
             )
             
             analysis = json.loads(response.text)
-            print(f"[LLM] Categorized as: {analysis['category']} | Priority: {analysis['priority']}")
+            
+            # Fallback if LLM forgets the key
+            if "location" not in analysis:
+                analysis["location"] = "Undisclosed Location"
+                
+            print(f"[LLM] Categorized: {analysis['category']} | Loc: {analysis['location']}")
             return analysis
             
         except Exception as e:
@@ -84,7 +101,8 @@ Respond strictly in JSON format:
                 "priority": "Medium",
                 "sentiment": "Neutral",
                 "summary": transcript[:200] + "..." if len(transcript) > 200 else transcript,
-                "tags": []
+                "tags": [],
+                "location": "Undisclosed Location"
             }
     
     def store_grievance(
@@ -102,8 +120,8 @@ Respond strictly in JSON format:
         
         cursor.execute("""
             INSERT INTO grievances 
-            (id, timestamp, transcript, category, priority, sentiment, summary, tags, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, timestamp, transcript, category, priority, sentiment, summary, tags, created_at, location)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             grievance_id,
             str(timestamp),
@@ -113,13 +131,14 @@ Respond strictly in JSON format:
             analysis.get("sentiment", "Neutral"),
             analysis.get("summary", ""),
             json.dumps(analysis.get("tags", [])),
-            created_at
+            created_at,
+            analysis.get("location", "Undisclosed Location")
         ))
         
         conn.commit()
         conn.close()
         
-        print(f"[DB] Stored grievance with ID: {grievance_id}")
+        print(f"[DB] Stored grievance {grievance_id} (Loc: {analysis.get('location')})")
         return grievance_id
     
     async def process_and_store(self, transcript: str, timestamp: float) -> Dict:
@@ -149,6 +168,10 @@ Respond strictly in JSON format:
         conn.close()
         
         if row:
+            # Handle potential missing column if row is from very old schema version 
+            # (though _init_database handles the migration, this is extra safety)
+            location = row[9] if len(row) > 9 else "Undisclosed Location"
+            
             return {
                 "id": row[0],
                 "timestamp": float(row[1]),
@@ -158,7 +181,8 @@ Respond strictly in JSON format:
                 "sentiment": row[5],
                 "summary": row[6],
                 "tags": json.loads(row[7]),
-                "created_at": row[8]
+                "created_at": row[8],
+                "location": location
             }
         return None
     
@@ -176,17 +200,22 @@ Respond strictly in JSON format:
         rows = cursor.fetchall()
         conn.close()
         
-        return [{
-            "id": row[0],
-            "timestamp": float(row[1]),
-            "transcript": row[2],
-            "category": row[3],
-            "priority": row[4],
-            "sentiment": row[5],
-            "summary": row[6],
-            "tags": json.loads(row[7]),
-            "created_at": row[8]
-        } for row in rows]
+        results = []
+        for row in rows:
+            location = row[9] if len(row) > 9 else "Undisclosed Location"
+            results.append({
+                "id": row[0],
+                "timestamp": float(row[1]),
+                "transcript": row[2],
+                "category": row[3],
+                "priority": row[4],
+                "sentiment": row[5],
+                "summary": row[6],
+                "tags": json.loads(row[7]),
+                "created_at": row[8],
+                "location": location
+            })
+        return results
     
     def get_statistics(self) -> Dict:
         """Get summary statistics of all grievances."""
@@ -211,10 +240,24 @@ Respond strictly in JSON format:
         """)
         by_priority = dict(cursor.fetchall())
         
+        # New: Stats by location
+        # Check if column exists first to be safe during migration edge cases
+        try:
+            cursor.execute("""
+                SELECT location, COUNT(*) as count 
+                FROM grievances 
+                GROUP BY location
+                ORDER BY count DESC
+            """)
+            by_location = dict(cursor.fetchall())
+        except sqlite3.OperationalError:
+            by_location = {}
+
         conn.close()
         
         return {
             "total_grievances": total,
             "by_category": by_category,
-            "by_priority": by_priority
+            "by_priority": by_priority,
+            "by_location": by_location
         }
