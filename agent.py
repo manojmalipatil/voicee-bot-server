@@ -167,7 +167,7 @@ class GrievanceBotLogic:
             strong_exit_phrases = [
                 "that's all", "that is all", "that's it", "that is it",
                 "nothing else", "nothing more", "i'm done", "i am done",
-                "have a good day", "thank you bye", "thanks bye"
+                "have a good day", "thank you bye", "thanks bye", "thank you", "Thank you", "That's all"
             ]
             
             for phrase in strong_exit_phrases:
@@ -269,7 +269,11 @@ async def entrypoint(ctx: JobContext):
     stt_stream = stt_provider.stream()
     bot = GrievanceBotLogic()
 
+    last_processed_transcript = ""
+    
     async def process_stt_events():
+        nonlocal last_processed_transcript
+        
         async for event in stt_stream:
             if event.type == stt.SpeechEventType.INTERIM_TRANSCRIPT:
                 if player.is_playing and len(event.alternatives[0].text) > 5:
@@ -277,20 +281,23 @@ async def entrypoint(ctx: JobContext):
                 
             elif event.type == stt.SpeechEventType.FINAL_TRANSCRIPT:
                 transcript = event.alternatives[0].text
-                if not transcript: 
+                if not transcript or transcript == last_processed_transcript:
                     continue
-
+                
+                last_processed_transcript = transcript
                 audio_key = bot.process_input(transcript)
                 
                 if audio_key:
-                    await player.play(AUDIO_FILES[audio_key])
-                    
                     if audio_key in ("closing", "early_exit"):
+                        # Play closing immediately without waiting for background processing
                         print("[CLOSING] Playing farewell message...")
-                        await asyncio.sleep(1.0)
+                        await player.play(AUDIO_FILES[audio_key])
+                        await asyncio.sleep(0.5)
                         print("[CLOSING] Disconnecting from room...")
                         await ctx.room.disconnect()
                         break
+                    else:
+                        await player.play(AUDIO_FILES[audio_key])
     
     asyncio.create_task(process_stt_events())
 
