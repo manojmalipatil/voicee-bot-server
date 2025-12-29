@@ -18,9 +18,10 @@ load_dotenv()
 
 # --- CONFIGURATION ---
 AUDIO_FILES = {
-    "greeting": "audio/greetingf.mp3",
-    "closing": "audio/closingf.mp3",
-    "probe_details": "audio/continuef.mp3", # Your long "Thank you for sharing..." script
+    "greeting": "audio/greeting_new.mp3",
+    "closing": "audio/closing_new.mp3",
+    "early_exit": "audio/early_closing.mp3",
+    "probe_details": "audio/probe_details_short.mp3", # Your long "Thank you for sharing..." script
     "ack_1": "audio/hmm.mp3",              # Short sound (0.5s)
     "ack_2": "audio/i_see.mp3",            # Short sound (0.5s)
     "ack_3": "audio/ohh_isit.mp3"             # Short sound (0.5s)
@@ -35,56 +36,81 @@ BYTES_PER_SAMPLE = 2
 grievance_processor = GrievanceProcessor(db_path="grievances.db")
 
 class AudioFilePlayer:
-    """Streams MP3s in perfect 10ms chunks."""
     def __init__(self, source: rtc.AudioSource):
         self.source = source
         self._current_task = None
         self.is_playing = False
+        self._cache = {}  # Store decoded audio frames here
+
+    def preload(self, files_dict):
+        """Pre-decode short audio files into memory."""
+        print("[INIT] Pre-loading short audio files...")
+        for key, path in files_dict.items():
+            # Pre-load only short acks to save RAM, stream long ones
+            if "ack" in key or "greeting" in key: 
+                try:
+                    self._cache[path] = list(self._decode_file(path))
+                    print(f"   -> Cached {path}")
+                except Exception as e:
+                    print(f"   -> Failed to cache {path}: {e}")
 
     async def play(self, filename: str):
+        # 1. Stop current audio (Handle interruption)
         if self._current_task and not self._current_task.done():
             self._current_task.cancel()
             try:
                 await self._current_task
             except asyncio.CancelledError:
                 pass
-        
-        if not os.path.exists(filename):
-            print(f"[ERROR] File not found: {filename}")
-            return
 
-        print(f"[PLAYING] {filename}")
         self.is_playing = True
-        self._current_task = asyncio.create_task(self._stream_file(filename))
+        
+        # 2. Check Cache
+        if filename in self._cache:
+            self._current_task = asyncio.create_task(self._stream_cached(filename))
+        else:
+            self._current_task = asyncio.create_task(self._stream_from_disk(filename))
+            
         await self._current_task
         self.is_playing = False
 
-    async def _stream_file(self, filename: str):
-        try:
-            container = av.open(filename)
-            stream = container.streams.audio[0]
-            resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
-            buffer = bytearray() 
+    def _decode_file(self, filename):
+        """Generator that yields audio frames from a file."""
+        container = av.open(filename)
+        stream = container.streams.audio[0]
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
+        buffer = bytearray()
+        
+        for frame in container.decode(stream):
+            for resampled_frame in resampler.resample(frame):
+                buffer.extend(resampled_frame.to_ndarray().tobytes())
+                while len(buffer) >= 960:
+                    yield buffer[:960]
+                    buffer = buffer[960:]
+        container.close()
 
-            for frame in container.decode(stream):
-                for resampled_frame in resampler.resample(frame):
-                    buffer.extend(resampled_frame.to_ndarray().tobytes())
-                    while len(buffer) >= 960:
-                        chunk_data = buffer[:960]
-                        buffer = buffer[960:]
-                        lk_frame = rtc.AudioFrame(
-                            data=chunk_data, 
-                            sample_rate=SAMPLE_RATE, 
-                            num_channels=NUM_CHANNELS, 
-                            samples_per_channel=FRAME_SIZE_SAMPLES
-                        )
-                        await self.source.capture_frame(lk_frame)
-                        await asyncio.sleep(0.01) 
+    async def _stream_cached(self, filename):
+        """Streams pre-loaded frames from memory (Zero Latency)."""
+        frames = self._cache[filename]
+        for chunk_data in frames:
+            lk_frame = rtc.AudioFrame(
+                data=chunk_data, sample_rate=SAMPLE_RATE, num_channels=NUM_CHANNELS, samples_per_channel=FRAME_SIZE_SAMPLES
+            )
+            await self.source.capture_frame(lk_frame)
+            await asyncio.sleep(0.01) # Maintain timing
+
+    async def _stream_from_disk(self, filename):
+        """Streams larger files from disk."""
+        # Use the same generator logic but with async sleep
+        try:
+            for chunk_data in self._decode_file(filename):
+                lk_frame = rtc.AudioFrame(
+                    data=chunk_data, sample_rate=SAMPLE_RATE, num_channels=NUM_CHANNELS, samples_per_channel=FRAME_SIZE_SAMPLES
+                )
+                await self.source.capture_frame(lk_frame)
+                await asyncio.sleep(0.01)
         except Exception as e:
-            print(f"Error playing file: {e}")
-        finally:
-            if 'container' in locals(): 
-                container.close()
+            print(f"Error streaming {filename}: {e}")
 
 class GrievanceBotLogic:
     def __init__(self):
@@ -94,166 +120,136 @@ class GrievanceBotLogic:
         self.grievance_timestamp = None
         
         # ACTIVE LISTENING STATE
-        self.has_played_probe = False  # Tracks if we've played the long empathy script
-        self.ack_sounds = ["ack_1", "ack_2", "ack_3"] # Keys from AUDIO_FILES
+        self.has_played_probe = False  
+        self.ack_sounds = ["ack_1", "ack_2", "ack_3"] 
 
     def process_input(self, text: str) -> str:
         if self.should_disconnect: 
             return None
         
-        text_lower = text.lower().strip()
+        text_clean = text.strip()
+        text_lower = text_clean.lower()
         words = text_lower.split() 
         word_count = len(words)
         
-        print(f"\n[USER SAYS] '{text}' (Words: {word_count})")
+        print(f"\n[USER SAYS] '{text_clean}' (Words: {word_count})")
+
+        # --- GLOBAL GUARD: IGNORE QUESTIONS ---
+        # If the user asks a question, they are definitely not leaving.
+        # e.g., "Are we done?" or "What do you think?"
+        if text_clean.endswith("?") or text_lower.startswith(("what", "how", "why", "who", "where")):
+            print("   -> Detected question/inquiry. Ignoring exit triggers.")
+            if self.state == "listening":
+                self.grievance_text += " " + text_clean
+            return None
 
         # --- 1. GREETING PHASE ---
         if self.state == "greeting":
-            exit_triggers = ["no", "nothing", "nope", "nah", "bye", "exit", "goodbye"]
-            should_exit_greeting = False
+            # Only exit if the response is explicitly negative and short
+            exit_triggers = ["no", "nothing", "nope", "nah"]
             
-            for i, w in enumerate(words):
-                clean_w = w.strip(".,!?")
-                if clean_w in exit_triggers:
-                    words_after = len(words) - 1 - i
-                    if words_after < 2:
-                        should_exit_greeting = True
-                        print(f"   -> Greeting exit trigger: '{clean_w}'")
-                        break
-
-            if should_exit_greeting:
+            # Check if the ENTIRE sentence is basically just a refusal
+            # e.g., "No." or "Nothing really." -> Exit
+            # e.g., "No, I actually have a big problem." -> Stay
+            is_pure_refusal = any(t in text_lower for t in exit_triggers) and word_count < 4
+            
+            if is_pure_refusal:
+                print(f"   -> Greeting refusal detected: '{text_clean}'")
                 self.state = "closing"
                 self.should_disconnect = True
-                return "closing"
+                return "early_exit"
             
             self.state = "listening"
-            self.grievance_text += text
+            self.grievance_text += text_clean
             self.grievance_timestamp = time.time()
 
-            if word_count > 8:
+            if word_count > 7:
                 self.has_played_probe = True
-                print("   -> substantial opening detected, playing probe.")
+                print("   -> Substantial opening detected, playing probe.")
                 return "probe_details"
             
             return None
 
         # --- 2. LISTENING PHASE ---
         elif self.state == "listening":
-            self.grievance_text += " " + text
+            self.grievance_text += " " + text_clean
             
-            # A. EXIT CHECK - Multi-layered approach
             should_exit_listening = False
             
-            # Layer 1: Exit phrases (high confidence)
-            exit_phrases = [
+            # --- SAFE EXIT CHECK ---
+            
+            # 1. Strong Phrases (High Confidence)
+            # These are specific enough that they rarely occur by accident.
+            strong_exit_phrases = [
                 "that's all", "that is all", "that's it", "that is it",
-                "i'm done", "i am done", "im done",
-                "that's everything", "that is everything",
-                "nothing else", "nothing more",
-                "that's all i have", "that's all i wanted to say"
+                "nothing else", "nothing more", "i'm done", "i am done",
+                "have a good day", "thank you bye", "thanks bye"
             ]
             
-            for phrase in exit_phrases:
+            for phrase in strong_exit_phrases:
                 if phrase in text_lower:
-                    # Check if phrase is at the end or followed by minimal words
-                    phrase_pos = text_lower.rfind(phrase)
-                    text_after_phrase = text_lower[phrase_pos + len(phrase):].strip()
-                    words_after_phrase = len([w for w in text_after_phrase.split() if w])
-                    
-                    if words_after_phrase < 3:  # Max 2 words after the phrase (e.g., "that's all, bye")
+                    # Ensure the phrase is at the END of the sentence
+                    # e.g. "That's all I have to say" -> OK
+                    # e.g. "That's all the money I have" -> NOT OK
+                    if text_lower.endswith(phrase) or text_lower.endswith(phrase + "."):
                         should_exit_listening = True
-                        print(f"   -> Exit phrase detected: '{phrase}'")
+                        print(f"   -> Strong exit phrase detected: '{phrase}'")
                         break
-            
-            # Layer 2: Single word exit triggers (medium confidence)
+                    
+                    # Also check if it's followed by very few words (garbage/fillers)
+                    idx = text_lower.find(phrase)
+                    remainder = text_lower[idx+len(phrase):].strip()
+                    if len(remainder.split()) <= 2:
+                        should_exit_listening = True
+                        print(f"   -> Strong exit phrase detected (w/ tail): '{phrase}'")
+                        break
+
+            # 2. Contextual Triggers (Medium Confidence)
+            # Only trigger these if they stand ALONE or are clearly ending the thought.
             if not should_exit_listening:
-                finish_triggers = [
-                    "done", "finished", "complete", "over",
-                    "bye", "goodbye", "thanks", "thank you", 
-                    "okay", "ok", "alright"
-                ]
-                
-                for i, w in enumerate(words):
-                    clean_w = w.strip(".,!?")
-                    if clean_w in finish_triggers:
-                        words_after = len(words) - 1 - i
-                        
-                        # Stricter check for ambiguous words like "okay" and "thanks"
-                        if clean_w in ["okay", "ok", "alright", "thanks", "thank you"]:
-                            # These need to be at the very end (0-1 words after)
-                            if words_after <= 1:
-                                should_exit_listening = True
-                                print(f"   -> Exit trigger detected: '{clean_w}' (end of speech)")
-                                break
-                        else:
-                            # Other triggers allow up to 2 words after
-                            if words_after < 3:
-                                should_exit_listening = True
-                                print(f"   -> Exit trigger detected: '{clean_w}'")
-                                break
-            
-            # Layer 3: Context-aware exit detection
-            # If user repeats similar sentiment (e.g., "that's all" after "thanks")
-            if not should_exit_listening and hasattr(self, '_last_utterance'):
-                confirmation_words = ["yes", "yeah", "yep", "correct", "right", "exactly"]
-                if text_lower in confirmation_words and word_count == 1:
-                    # Single confirmation word after a potential exit phrase
+                # "bye" and "goodbye" are usually safe if they appear at the end
+                if text_lower.endswith("bye") or text_lower.endswith("goodbye"):
                     should_exit_listening = True
-                    print(f"   -> Exit confirmation detected: '{text_lower}'")
-            
-            # Store last utterance for context
-            self._last_utterance = text_lower
-            
-            # CRITICAL: Exit immediately if exit condition is met
+                    print(f"   -> Farewell detected: '{text_clean}'")
+
+                # "Thanks" / "Thank you" are DANGEROUS. 
+                # Only accept if purely isolated: "Okay, thank you." 
+                elif text_lower in ["thank you", "thanks", "thank you.", "thanks."]:
+                    # We only exit on "thanks" if the PREVIOUS utterance was also short/closing-like
+                    # OR if we simply assume a solo "Thank you" is a close.
+                    # Safest approach: Treat solo "Thank you" as an exit.
+                    should_exit_listening = True
+                    print(f"   -> Solo gratitude detected")
+
+            # --- EXECUTE EXIT ---
             if should_exit_listening:
                 print("   -> Exiting listening phase")
                 self._save_and_exit()
                 return "closing"
-                
-            # B. NOISE FILTER - Improved
-            # Ignore tiny fragments, but allow emotional expressions
+
+            # --- B. EMPATHY & BACKCHANNEL ---
+            
+            # Ignore very short fragments to prevent spamming "hmm" on noise
             if word_count < 2:
-                allowed_short = ['yes', 'no', 'yeah', 'okay', 'ok']
-                if text_lower not in allowed_short:
-                    print("   -> Fragment detected. Ignoring.")
-                    return None
-                # If it's "yes" or "no" in isolation, treat cautiously
-                elif text_lower in ['yes', 'yeah', 'okay', 'ok']:
-                    # Could be confirmation of being done, but we'll wait for more
-                    print("   -> Short affirmation, continuing to listen...")
-                    return None
-            
-            # C. EMPATHY & BACKCHANNEL LOGIC - Enhanced
-            
-            # Scenario 1: The "Probe" (Deep Empathy)
+                print("   -> Fragment/Noise detected. Ignoring.")
+                return None
+
+            # Probe Logic (Once only)
             if not self.has_played_probe:
-                # Only probe after substantial content (more than basic greeting)
                 if word_count > 5:
                     self.has_played_probe = True
                     print("   -> Playing Empathy Probe (Once only)")
                     return "probe_details"
-                else:
-                    # Wait for more before probing
-                    return None
+                return None
 
-            # Scenario 2: The "Backchannel" (Active listening)
+            # Backchannel Logic
             else:
-                # Intelligent backchanneling based on content length
-                # Longer utterances = more likely to acknowledge
-                if word_count > 10:
-                    # Substantial content, high chance of acknowledgment
-                    ack_probability = 0.8
-                elif word_count > 5:
-                    # Medium content, medium chance
-                    ack_probability = 0.6
-                else:
-                    # Short content, lower chance (might be trailing off)
-                    ack_probability = 0.3
-                
-                if random.random() < ack_probability:
-                    selected_ack = random.choice(self.ack_sounds)
-                    print(f"   -> Backchanneling: {selected_ack} (prob: {ack_probability})")
-                    return selected_ack
+                # Only backchannel on longer sentences to avoid interrupting flow
+                if word_count > 7:
+                    if random.random() < 0.7: # 70% chance
+                        selected_ack = random.choice(self.ack_sounds)
+                        print(f"   -> Backchanneling: {selected_ack}")
+                        return selected_ack
                 
                 print("   -> Listening quietly...")
                 return None
@@ -265,10 +261,9 @@ class GrievanceBotLogic:
         print(f"\n{'='*60}")
         print("[SAVING] Grievance collected")
         print(f"Words collected: {len(self.grievance_text.split())}")
-        print(f"Text preview: {self.grievance_text[:100]}...")
         print(f"{'='*60}\n")
         
-        # Process in background - don't block the closing message
+        # Fire and forget the background task (using the fixed await logic from previous step)
         asyncio.create_task(self._process_grievance_background())
         
         self.state = "closing"
@@ -316,35 +311,43 @@ async def entrypoint(ctx: JobContext):
     source = rtc.AudioSource(SAMPLE_RATE, NUM_CHANNELS)
     track = rtc.LocalAudioTrack.create_audio_track("bot_voice", source)
     await ctx.room.local_participant.publish_track(track)
+    
+    # 1. Initialize Player and Preload
     player = AudioFilePlayer(source)
+    player.preload(AUDIO_FILES) # <--- Pre-load acks into RAM
 
+    # 2. Optimized Deepgram Config
     stt_provider = deepgram.STT(
         model="nova-2", 
         language="en", 
         smart_format=True,
-        endpointing_ms=1500,
-        interim_results=False
+        endpointing_ms=500,  # <--- CHANGED from 1500 to 500 (Massive speedup)
+        interim_results=True # <--- Set to True so you know when they START speaking
     )
     stt_stream = stt_provider.stream()
     bot = GrievanceBotLogic()
 
     async def process_stt_events():
         async for event in stt_stream:
+            if event.type == stt.SpeechEventType.INTERIM_TRANSCRIPT:
+                if player.is_playing:
+                    # If user starts speaking, stop the bot immediately?
+                    # Ideally you check if transcript length > 2 chars to avoid noise
+                    if len(event.alternatives[0].text) > 5:
+                         print("[BARGE-IN] User speaking, stopping audio.")
+                         player.stop() # logic to stop player could go here
+                    pass
+                
             if event.type == stt.SpeechEventType.FINAL_TRANSCRIPT:
                 transcript = event.alternatives[0].text
-                if not transcript: 
-                    continue
-                
-                if player.is_playing:
-                    print("[Bot is speaking - ignoring user input]")
-                    continue
+                if not transcript: continue
 
                 audio_key = bot.process_input(transcript)
                 
                 if audio_key:
                     await player.play(AUDIO_FILES[audio_key])
                     
-                    if audio_key == "closing":
+                    if audio_key == "closing" or audio_key == "early_exit":
                         print("[CLOSING] Playing farewell message...")
                         await asyncio.sleep(1.0)  # Brief pause after closing audio finishes
                         print("[CLOSING] Disconnecting from room...")

@@ -3,161 +3,248 @@ import os
 import time
 import av
 from dotenv import load_dotenv
-import json
-import httpx
+import random
 
 # LiveKit Imports
 from livekit import agents, rtc
 from livekit.agents import JobContext, WorkerOptions, cli, AutoSubscribe, stt
 from livekit.plugins import deepgram
 
+# Import our grievance processor
+from grievance_processor import GrievanceProcessor
+
 load_dotenv()
 
 # --- CONFIGURATION ---
 AUDIO_FILES = {
-    "greeting": "greeting.mp3",
-    "continue": "continue.mp3", 
-    "closing": "closing.mp3"
+    "greeting": "audio/greeting_new.mp3",
+    "closing": "audio/closing_new.mp3",
+    "early_exit": "audio/early_closing.mp3",
+    "probe_details": "audio/probe_details_short.mp3",
+    "ack_1": "audio/hmm.mp3",
+    "ack_2": "audio/i_see.mp3",
+    "ack_3": "audio/ohh_isit.mp3"
 }
 
 SAMPLE_RATE = 48000
 NUM_CHANNELS = 1
 FRAME_SIZE_SAMPLES = 480
-BYTES_PER_SAMPLE = 2
 
-grievance_storage = []
-
-async def send_to_pipeline(transcript: str):
-    url = "http://localhost:8000/process-grievance"
-    async with httpx.AsyncClient() as client:
-        try:
-            await client.post(url, json={"text": transcript})
-            print("[PIPELINE] Transcript sent for processing")
-        except Exception as e:
-            print(f"[ERROR] Pipeline unreachable: {e}")
+# Initialize the grievance processor
+grievance_processor = GrievanceProcessor(db_path="grievances.db")
 
 class AudioFilePlayer:
-    """Streams MP3s in perfect 10ms chunks."""
     def __init__(self, source: rtc.AudioSource):
         self.source = source
         self._current_task = None
         self.is_playing = False
+        self._cache = {}
+
+    def preload(self, files_dict):
+        """Pre-decode short audio files into memory."""
+        print("[INIT] Pre-loading short audio files...")
+        for key, path in files_dict.items():
+            if "ack" in key or "greeting" in key: 
+                try:
+                    self._cache[path] = list(self._decode_file(path))
+                    print(f"   -> Cached {path}")
+                except Exception as e:
+                    print(f"   -> Failed to cache {path}: {e}")
 
     async def play(self, filename: str):
+        # Stop current audio
         if self._current_task and not self._current_task.done():
             self._current_task.cancel()
             try:
                 await self._current_task
             except asyncio.CancelledError:
                 pass
-        
-        if not os.path.exists(filename):
-            print(f"[ERROR] File not found: {filename}")
-            return
 
-        print(f"[PLAYING] {filename}")
         self.is_playing = True
-        self._current_task = asyncio.create_task(self._stream_file(filename))
+        
+        # Check cache vs disk
+        if filename in self._cache:
+            self._current_task = asyncio.create_task(self._stream_cached(filename))
+        else:
+            self._current_task = asyncio.create_task(self._stream_from_disk(filename))
+            
         await self._current_task
         self.is_playing = False
 
-    async def _stream_file(self, filename: str):
-        try:
-            container = av.open(filename)
-            stream = container.streams.audio[0]
-            resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
-            buffer = bytearray() 
+    def _decode_file(self, filename):
+        """Generator that yields audio frames from a file."""
+        container = av.open(filename)
+        stream = container.streams.audio[0]
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
+        buffer = bytearray()
+        
+        for frame in container.decode(stream):
+            for resampled_frame in resampler.resample(frame):
+                buffer.extend(resampled_frame.to_ndarray().tobytes())
+                while len(buffer) >= 960:
+                    yield buffer[:960]
+                    buffer = buffer[960:]
+        container.close()
 
-            for frame in container.decode(stream):
-                for resampled_frame in resampler.resample(frame):
-                    buffer.extend(resampled_frame.to_ndarray().tobytes())
-                    while len(buffer) >= 960:
-                        chunk_data = buffer[:960]
-                        buffer = buffer[960:]
-                        lk_frame = rtc.AudioFrame(
-                            data=chunk_data, 
-                            sample_rate=SAMPLE_RATE, 
-                            num_channels=NUM_CHANNELS, 
-                            samples_per_channel=FRAME_SIZE_SAMPLES
-                        )
-                        await self.source.capture_frame(lk_frame)
-                        await asyncio.sleep(0.01) 
+    async def _stream_cached(self, filename):
+        """Streams pre-loaded frames from memory."""
+        frames = self._cache[filename]
+        for chunk_data in frames:
+            lk_frame = rtc.AudioFrame(
+                data=chunk_data, sample_rate=SAMPLE_RATE, 
+                num_channels=NUM_CHANNELS, samples_per_channel=FRAME_SIZE_SAMPLES
+            )
+            await self.source.capture_frame(lk_frame)
+            await asyncio.sleep(0.01)
+
+    async def _stream_from_disk(self, filename):
+        """Streams larger files from disk."""
+        try:
+            for chunk_data in self._decode_file(filename):
+                lk_frame = rtc.AudioFrame(
+                    data=chunk_data, sample_rate=SAMPLE_RATE, 
+                    num_channels=NUM_CHANNELS, samples_per_channel=FRAME_SIZE_SAMPLES
+                )
+                await self.source.capture_frame(lk_frame)
+                await asyncio.sleep(0.01)
         except Exception as e:
-            print(f"Error playing file: {e}")
-        finally:
-            if 'container' in locals(): 
-                container.close()
+            print(f"Error streaming {filename}: {e}")
 
 class GrievanceBotLogic:
     def __init__(self):
         self.state = "greeting"
         self.grievance_text = ""
         self.should_disconnect = False
-        self.continue_played = False  # NEW: Track if "continue" was already played
-        self.last_input_time = time.time()  # NEW: Track timing
-        self.total_word_count = 0  # NEW: Track overall input length
+        self.grievance_timestamp = None
+        self.has_played_probe = False  
+        self.ack_sounds = ["ack_1", "ack_2", "ack_3"]
 
     def process_input(self, text: str) -> str:
         if self.should_disconnect: 
             return None
         
-        text_lower = text.lower().strip()
-        word_count = len(text_lower.split())
-        self.total_word_count += word_count
-        self.last_input_time = time.time()
+        text_clean = text.strip()
+        text_lower = text_clean.lower()
+        words = text_lower.split() 
+        word_count = len(words)
         
-        print(f"\n[USER SAYS] '{text}' (Words: {word_count}, Total: {self.total_word_count})")
+        print(f"\n[USER SAYS] '{text_clean}' (Words: {word_count})")
 
-        # 1. Greeting Phase
+        # GLOBAL GUARD: IGNORE QUESTIONS
+        if text_clean.endswith("?") or text_lower.startswith(("what", "how", "why", "who", "where")):
+            print("   -> Detected question/inquiry. Ignoring exit triggers.")
+            if self.state == "listening":
+                self.grievance_text += " " + text_clean
+            return None
+
+        # --- GREETING PHASE ---
         if self.state == "greeting":
-            if any(w in text_lower for w in ["bye", "exit", "nothing", "no"]):
+            exit_triggers = ["no", "nothing", "nope", "nah"]
+            is_pure_refusal = any(t in text_lower for t in exit_triggers) and word_count < 4
+            
+            if is_pure_refusal:
+                print(f"   -> Greeting refusal detected: '{text_clean}'")
                 self.state = "closing"
                 self.should_disconnect = True
-                return "closing"
+                return "early_exit"
             
             self.state = "listening"
-            self.grievance_text += text
-            self.continue_played = False  # Reset for listening phase
-            return None  # Don't play continue immediately after greeting
+            self.grievance_text += text_clean
+            self.grievance_timestamp = time.time()
 
-        # 2. Listening Phase
-        elif self.state == "listening":
-            self.grievance_text += " " + text
+            if word_count > 7:
+                self.has_played_probe = True
+                print("   -> Substantial opening detected, playing probe.")
+                return "probe_details"
             
-            # EXIT CHECK: Priority #1
-            exit_words = ["done", "finished", "that's all", "that's it", "thank you", "thanks", "bye", "goodbye"]
-            if any(w in text_lower for w in exit_words):
-                print(f"[SAVING REPORT] {self.grievance_text}")
-                grievance_storage.append({
-                    "timestamp": time.time(),
-                    "text": self.grievance_text
-                })
-                self.state = "closing"
-                self.should_disconnect = True
+            return None
+
+        # --- LISTENING PHASE ---
+        elif self.state == "listening":
+            self.grievance_text += " " + text_clean
+            
+            # STRONG EXIT PHRASES (High Confidence)
+            strong_exit_phrases = [
+                "that's all", "that is all", "that's it", "that is it",
+                "nothing else", "nothing more", "i'm done", "i am done",
+                "have a good day", "thank you bye", "thanks bye"
+            ]
+            
+            for phrase in strong_exit_phrases:
+                if phrase in text_lower:
+                    if text_lower.endswith(phrase) or text_lower.endswith(phrase + "."):
+                        self._save_and_exit()
+                        print(f"   -> Strong exit phrase detected: '{phrase}'")
+                        return "closing"
+                    
+                    idx = text_lower.find(phrase)
+                    remainder = text_lower[idx+len(phrase):].strip()
+                    if len(remainder.split()) <= 2:
+                        self._save_and_exit()
+                        print(f"   -> Strong exit phrase detected (w/ tail): '{phrase}'")
+                        return "closing"
+
+            # CONTEXTUAL TRIGGERS (Medium Confidence)
+            if text_lower.endswith("bye") or text_lower.endswith("goodbye"):
+                self._save_and_exit()
+                print(f"   -> Farewell detected: '{text_clean}'")
+                return "closing"
+            
+            elif text_lower in ["thank you", "thanks", "thank you.", "thanks."]:
+                self._save_and_exit()
+                print(f"   -> Solo gratitude detected")
                 return "closing"
 
-            # FILTER: Ignore very short fragments (< 5 words)
-            if word_count < 5:
-                print("   -> Fragment detected (too short). Staying silent.")
-                return None 
+            # EMPATHY & BACKCHANNEL (avoid spamming on noise)
+            if word_count < 2:
+                print("   -> Fragment/Noise detected. Ignoring.")
+                return None
+
+            # Play probe once on substantial input
+            if not self.has_played_probe and word_count > 5:
+                self.has_played_probe = True
+                print("   -> Playing Empathy Probe (Once only)")
+                return "probe_details"
+
+            # Backchannel on longer utterances
+            if word_count > 7 and random.random() < 0.7:
+                selected_ack = random.choice(self.ack_sounds)
+                print(f"   -> Backchanneling: {selected_ack}")
+                return selected_ack
             
-            # NEW LOGIC: Only play "continue" once after substantial input
-            # Only prompt if:
-            # 1. We haven't played continue yet in this session
-            # 2. User has spoken at least 20 words total (substantial grievance started)
-            # 3. Current utterance is at least 10 words (complete thought)
-            if (not self.continue_played and 
-                self.total_word_count >= 20 and 
-                word_count >= 5):
-                print("   -> Playing continue prompt (first time only)")
-                self.continue_played = True
-                return "continue"
-            
-            # Otherwise, stay silent and keep listening
-            print("   -> Acknowledged. Staying silent, waiting for more...")
+            print("   -> Listening quietly...")
             return None
 
         return None
+    
+    def _save_and_exit(self):
+        """Save the grievance and prepare for exit."""
+        print(f"\n{'='*60}")
+        print("[SAVING] Grievance collected")
+        print(f"Words collected: {len(self.grievance_text.split())}")
+        print(f"{'='*60}\n")
+        
+        asyncio.create_task(self._process_grievance_background())
+        self.state = "closing"
+        self.should_disconnect = True
+    
+    async def _process_grievance_background(self):
+        """Process grievance in background without blocking exit."""
+        try:
+            print("[BACKGROUND] Starting grievance processing...")
+            result = await grievance_processor.process_and_store(
+                transcript=self.grievance_text,
+                timestamp=self.grievance_timestamp or time.time()
+            )
+            
+            print(f"\n{'='*60}")
+            print(f"[SUCCESS] Grievance processed and stored")
+            print(f"ID: {result.get('id', 'N/A')}")
+            print(f"Summary: {result.get('summary', 'N/A')[:100]}...")
+            print(f"{'='*60}\n")
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to process grievance: {e}")
 
 async def entrypoint(ctx: JobContext):
     print(f"Room created: {ctx.room.name}. Waiting for user...")
@@ -166,31 +253,31 @@ async def entrypoint(ctx: JobContext):
     source = rtc.AudioSource(SAMPLE_RATE, NUM_CHANNELS)
     track = rtc.LocalAudioTrack.create_audio_track("bot_voice", source)
     await ctx.room.local_participant.publish_track(track)
+    
+    # Initialize player and preload
     player = AudioFilePlayer(source)
+    player.preload(AUDIO_FILES)
 
-    # --- TUNING CONFIGURATION ---
-    # Increased to 4 seconds to give slow speakers more time
-    # This prevents interrupting users who pause to think
+    # Setup STT
     stt_provider = deepgram.STT(
         model="nova-2", 
         language="en", 
         smart_format=True,
-        endpointing_ms=4000,  # Increased to 4 seconds for slow speakers
-        interim_results=False  # Only process final transcripts
+        endpointing_ms=500,
+        interim_results=True
     )
     stt_stream = stt_provider.stream()
     bot = GrievanceBotLogic()
 
     async def process_stt_events():
         async for event in stt_stream:
-            if event.type == stt.SpeechEventType.FINAL_TRANSCRIPT:
+            if event.type == stt.SpeechEventType.INTERIM_TRANSCRIPT:
+                if player.is_playing and len(event.alternatives[0].text) > 5:
+                    print("[BARGE-IN] User speaking, stopping audio.")
+                
+            elif event.type == stt.SpeechEventType.FINAL_TRANSCRIPT:
                 transcript = event.alternatives[0].text
                 if not transcript: 
-                    continue
-                
-                # If bot is speaking, ignore user inputs (prevents interruption)
-                if player.is_playing:
-                    print("[Bot is speaking - ignoring user input]")
                     continue
 
                 audio_key = bot.process_input(transcript)
@@ -198,12 +285,12 @@ async def entrypoint(ctx: JobContext):
                 if audio_key:
                     await player.play(AUDIO_FILES[audio_key])
                     
-                if bot.should_disconnect:
-                    asyncio.create_task(send_to_pipeline(bot.grievance_text)) # Fire and forget
-                    await asyncio.sleep(2)
-                    print("Disconnecting...")
-                    await ctx.room.disconnect()
-                    break
+                    if audio_key in ("closing", "early_exit"):
+                        print("[CLOSING] Playing farewell message...")
+                        await asyncio.sleep(1.0)
+                        print("[CLOSING] Disconnecting from room...")
+                        await ctx.room.disconnect()
+                        break
     
     asyncio.create_task(process_stt_events())
 
@@ -219,17 +306,17 @@ async def entrypoint(ctx: JobContext):
             
             async def push_audio_to_stt():
                 async for event in audio_stream:
-                    # Only push audio to STT when bot is NOT speaking
                     if not player.is_playing:
                         stt_stream.push_frame(event.frame)
             
             asyncio.create_task(push_audio_to_stt())
-            asyncio.create_task(play_greeting_after_delay(player))
-
-    async def play_greeting_after_delay(p):
-        await asyncio.sleep(1.5) 
-        print("Playing Greeting...")
-        await p.play(AUDIO_FILES["greeting"])
+            
+            async def play_greeting():
+                await asyncio.sleep(1.5) 
+                print("Playing Greeting...")
+                await player.play(AUDIO_FILES["greeting"])
+            
+            asyncio.create_task(play_greeting())
 
 if __name__ == "__main__":
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
