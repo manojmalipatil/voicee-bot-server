@@ -118,6 +118,7 @@ class GrievanceBotLogic:
         self.grievance_timestamp = None
         self.has_played_probe = False  
         self.ack_sounds = ["ack_1", "ack_2", "ack_3"]
+        self.save_data = None  # Store data to save instead of triggering immediately
 
     def process_input(self, text: str) -> str:
         if self.should_disconnect: 
@@ -173,27 +174,23 @@ class GrievanceBotLogic:
             for phrase in strong_exit_phrases:
                 if phrase in text_lower:
                     if text_lower.endswith(phrase) or text_lower.endswith(phrase + "."):
-                        self._save_and_exit()
                         print(f"   -> Strong exit phrase detected: '{phrase}'")
-                        return "closing"
+                        return self._prepare_exit()
                     
                     idx = text_lower.find(phrase)
                     remainder = text_lower[idx+len(phrase):].strip()
                     if len(remainder.split()) <= 2:
-                        self._save_and_exit()
                         print(f"   -> Strong exit phrase detected (w/ tail): '{phrase}'")
-                        return "closing"
+                        return self._prepare_exit()
 
             # CONTEXTUAL TRIGGERS (Medium Confidence)
             if text_lower.endswith("bye") or text_lower.endswith("goodbye"):
-                self._save_and_exit()
                 print(f"   -> Farewell detected: '{text_clean}'")
-                return "closing"
+                return self._prepare_exit()
             
             elif text_lower in ["thank you", "thanks", "thank you.", "thanks."]:
-                self._save_and_exit()
                 print(f"   -> Solo gratitude detected")
-                return "closing"
+                return self._prepare_exit()
 
             # EMPATHY & BACKCHANNEL (avoid spamming on noise)
             if word_count < 2:
@@ -217,24 +214,36 @@ class GrievanceBotLogic:
 
         return None
     
-    def _save_and_exit(self):
-        """Save the grievance and prepare for exit."""
+    def _prepare_exit(self):
+        """Prepare for exit. Stores data for background save, returns immediately."""
         print(f"\n{'='*60}")
-        print("[SAVING] Grievance collected")
+        print("[PREPARING EXIT] Grievance collected")
         print(f"Words collected: {len(self.grievance_text.split())}")
         print(f"{'='*60}\n")
         
-        asyncio.create_task(self._process_grievance_background())
+        # Store the data to be saved (don't start any async operations)
+        self.save_data = {
+            'transcript': self.grievance_text,
+            'timestamp': self.grievance_timestamp or time.time()
+        }
+        
+        # Set flags
         self.state = "closing"
         self.should_disconnect = True
+        
+        # Return immediately
+        return "closing"
     
-    async def _process_grievance_background(self):
-        """Process grievance in background without blocking exit."""
+    async def save_grievance_background(self):
+        """Save the grievance in background. Call after playing closing audio."""
+        if not self.save_data:
+            return
+            
         try:
             print("[BACKGROUND] Starting grievance processing...")
             result = await grievance_processor.process_and_store(
-                transcript=self.grievance_text,
-                timestamp=self.grievance_timestamp or time.time()
+                transcript=self.save_data['transcript'],
+                timestamp=self.save_data['timestamp']
             )
             
             print(f"\n{'='*60}")
@@ -245,6 +254,9 @@ class GrievanceBotLogic:
             
         except Exception as e:
             print(f"[ERROR] Failed to process grievance: {e}")
+        finally:
+            self.save_data = None
+
 
 async def entrypoint(ctx: JobContext):
     print(f"Room created: {ctx.room.name}. Waiting for user...")
@@ -288,15 +300,23 @@ async def entrypoint(ctx: JobContext):
                 audio_key = bot.process_input(transcript)
                 
                 if audio_key:
+                    # Handle closing/early_exit
                     if audio_key in ("closing", "early_exit"):
-                        # Play closing immediately without waiting for background processing
+                        # Play closing FIRST (immediately)
                         print("[CLOSING] Playing farewell message...")
-                        await player.play(AUDIO_FILES[audio_key])
+                        await player.play(AUDIO_FILES["closing"])
+                        
+                        # THEN start background save (after audio is playing/done)
+                        print("[CLOSING] Starting background save...")
+                        asyncio.create_task(bot.save_grievance_background())
+                        
+                        # Brief pause then disconnect
                         await asyncio.sleep(0.5)
                         print("[CLOSING] Disconnecting from room...")
                         await ctx.room.disconnect()
                         break
                     else:
+                        # Normal audio playback
                         await player.play(AUDIO_FILES[audio_key])
     
     asyncio.create_task(process_stt_events())
