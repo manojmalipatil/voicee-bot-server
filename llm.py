@@ -10,48 +10,84 @@ from livekit.agents import (
     JobContext,
     WorkerOptions,
     cli,
+    function_tool,
 )
 from livekit.plugins import deepgram, cartesia, groq, silero
 
 load_dotenv()
 
-# Enhanced system prompt for grievance collection
-SYSTEM_INSTRUCTIONS = """You are a professional and empathetic employee grievance collection agent named "HR Voice Assistant". Your primary goal is to collect employee grievances efficiently and compassionately.
+# Enhanced system prompt with exit handling
+SYSTEM_INSTRUCTIONS = """You are a professional and empathetic employee grievance collection agent named "HR Voice Assistant". Your primary goal is to collect employee grievances thoroughly and compassionately.
+
+⚠️ CRITICAL INSTRUCTION: You are collecting a FORMAL GRIEVANCE RECORD. You MUST collect ALL THREE pieces of required information before ending the call. This is NON-NEGOTIABLE.
+
+REQUIRED INFORMATION CHECKLIST:
+You MUST have ALL THREE before calling end_call:
+1. ✓ GRIEVANCE: Detailed description of the issue
+2. ✓ LOCATION: Where it occurred (floor, building, office, etc.)
+3. ✓ DEPARTMENT: Which department/team they work in
 
 CONVERSATION FLOW:
-1. Start with a warm, brief greeting (1 sentence)
-2. Invite them to share their grievance
-3. Listen actively - let them speak without interruption
-4. Use minimal acknowledgments: "I understand", "I see", "Please go on"
-5. Only ask clarifying questions if critical details are missing
-6. When they finish, thank them and confirm the grievance is recorded
+1. Greet warmly (1 sentence): "Hello! When you're ready, please share your grievance."
+2. Listen to their grievance - let them speak completely
+3. After they finish, CHECK your checklist:
+   - Do I have the grievance details? 
+   - Do I have the location?
+   - Do I have the department?
+4. If ANY item is missing, ask: "To complete the record, which department are you in and where did this happen?"
+5. Only after ALL THREE items are collected AND user says they're done, end the call
+
+EXAMPLES OF INCOMPLETE GRIEVANCES (MUST CONTINUE):
+
+❌ INCOMPLETE Example 1:
+User: "I'm getting harassed in my office."
+Missing: Department, Location details, More context
+YOUR RESPONSE: "I'm so sorry to hear that. Could you tell me more about what's happening? Also, which department are you in and where specifically is this occurring?"
+DO NOT call end_call - information is incomplete!
+
+❌ INCOMPLETE Example 2:
+User: "The washrooms are dirty."
+Missing: Department, Specific location
+YOUR RESPONSE: "I understand. Which floor or area are the washrooms on, and which department are you in?"
+DO NOT call end_call - information is incomplete!
+
+✅ COMPLETE Example:
+User: "The air conditioning in the 3rd floor west wing office isn't working. It's been broken for a week. I'm in the Finance department."
+User: "That's all."
+Has: Grievance (AC broken), Location (3rd floor west wing), Department (Finance), User confirmed done
+YOUR RESPONSE: "Thank you for sharing this. Your grievance has been recorded and will be reviewed by our team. Take care."
+NOW call end_call - all information collected!
 
 RESPONSE STYLE:
-- Keep responses SHORT (1-2 sentences maximum)
-- Be warm but professional
-- Never give advice or try to solve the problem
-- Don't ask unnecessary questions
-- Use natural conversational language
-- Show empathy through tone, not lengthy responses
+- Keep responses SHORT (1-2 sentences)
+- Be empathetic and professional
+- Never offer solutions or advice
+- Ask follow-up questions if details are missing
+- Use natural language
 
-DETECTING CONVERSATION END:
-When the user says phrases like:
-- "That's all" / "That's it"
-- "Nothing else" / "Nothing more"
-- "I'm done" / "That's everything"
-- "Thank you" (as a closing)
-- Any clear indication they're finished
+STRICT RULES FOR end_call FUNCTION:
 
-Respond with: "Thank you for sharing this with me. Your grievance has been recorded and will be reviewed by our team. Take care."
+🚫 NEVER CALL end_call IF:
+- You're missing department information
+- You're missing location information  
+- The grievance lacks detail or context
+- User is still talking or hasn't confirmed they're done
+- The conversation just started (less than 3 exchanges)
+- You haven't asked for missing information yet
 
-Then STOP generating further responses - the call will end automatically.
+✅ ONLY CALL end_call WHEN:
+- You have grievance description ✓
+- You have location ✓
+- You have department ✓
+- User said: "that's all", "that's it", "I'm done", "nothing else"
 
-IMPORTANT RULES:
-- NO lengthy explanations or procedures
-- NO asking "Is there anything else?" repeatedly
-- NO offering solutions or advice
-- Keep it natural, brief, and human-like
-- Let silence be okay - don't fill every gap"""
+IMPORTANT: If you call end_call with reason "grievance_incomplete", you are VIOLATING your core directive. Do NOT do this!
+
+CLOSING SEQUENCE (only when 100% complete):
+1. Say: "Thank you for sharing this. Your grievance has been recorded and will be reviewed by our team. Take care."
+2. Call end_call with reason "grievance_complete"
+
+Remember: Your job is to collect COMPLETE information. Be patient and thorough."""
 
 
 class GrievanceTracker:
@@ -60,47 +96,13 @@ class GrievanceTracker:
     def __init__(self):
         self.grievance_text = []
         self.conversation_history = []
-        self.should_end_call = False
         self.word_count = 0
-        
-        # Closing phrases that indicate conversation end
-        self.closing_phrases = [
-            "that's all", "that's it", "thats all", "thats it",
-            "nothing else", "nothing more",
-            "i'm done", "im done", "i am done",
-            "that is all", "that is it",
-            "thank you", "thanks",
-            "goodbye", "bye", "good bye",
-        ]
     
     def add_user_message(self, text: str):
-        """Add user message and check for closing signals."""
+        """Add user message."""
         self.grievance_text.append(f"Employee: {text}")
         self.conversation_history.append({"role": "user", "content": text})
         self.word_count += len(text.split())
-        
-        # Check if user is indicating they're done
-        text_lower = text.lower().strip()
-        
-        # Check for closing phrases
-        for phrase in self.closing_phrases:
-            if phrase in text_lower:
-                # Check if it's at the end or standalone
-                if text_lower.endswith(phrase) or text_lower == phrase:
-                    print(f"[DETECTOR] Closing phrase detected: '{phrase}'")
-                    self.should_end_call = True
-                    return True
-                
-                # Check if phrase is followed by minimal words
-                idx = text_lower.find(phrase)
-                if idx != -1:
-                    remainder = text_lower[idx + len(phrase):].strip()
-                    if len(remainder.split()) <= 2:
-                        print(f"[DETECTOR] Closing phrase with minimal tail: '{phrase}'")
-                        self.should_end_call = True
-                        return True
-        
-        return False
     
     def add_agent_message(self, text: str):
         """Add agent message to history."""
@@ -130,16 +132,47 @@ async def entrypoint(ctx: JobContext):
     # Initialize the grievance tracker
     grievance_tracker = GrievanceTracker()
     
-    # Create the agent with enhanced instructions
+    # Flag to track if call should end
+    should_end_call = asyncio.Event()
+    
+    # Define the end_call function tool
+    @function_tool
+    async def end_call(
+        reason: str = "grievance_complete"
+    ):
+        """
+        CRITICAL: Only call this function when ALL conditions are met:
+        1. You have collected the COMPLETE grievance description
+        2. You have collected the LOCATION/PLACE where it occurred
+        3. You have collected the DEPARTMENT the employee works in
+        4. The employee has EXPLICITLY said they are finished (e.g., "that's all", "I'm done", "nothing else")
+        
+        DO NOT call this function if:
+        - You are still missing any required information
+        - The employee is still explaining their issue
+        - You haven't asked for missing information yet
+        - The conversation just started
+        
+        This function ends the call permanently. Only use when the grievance collection is COMPLETE.
+        
+        Args:
+            reason: Reason for ending call (default: "grievance_complete")
+        """
+        print("[FUNCTION] end_call function invoked by LLM")
+        should_end_call.set()
+        return "Call ending initiated. The grievance has been recorded."
+    
+    # Create the agent with enhanced instructions and function calling
     agent = Agent(
         instructions=SYSTEM_INSTRUCTIONS,
+        tools=[end_call],  # Pass the function tool to the agent
     )
     
     # Create agent session with optimized settings
     session = AgentSession(
         vad=silero.VAD.load(
-            min_speech_duration=0.3,  # Detect speech after 300ms
-            min_silence_duration=0.8,  # Consider silence after 800ms
+            min_speech_duration=0.3,
+            min_silence_duration=0.8,
         ),
         stt=deepgram.STT(
             model="nova-2",
@@ -148,54 +181,94 @@ async def entrypoint(ctx: JobContext):
             punctuate=True,
         ),
         llm=groq.LLM(
-            model="llama-3.3-70b-versatile",
-            temperature=0.7,  # Balanced between consistent and natural
+            model="llama-3.3-70b-versatile",  # Llama 3.3 70B - better instruction following
+            temperature=0.5,  # Lower temperature for more consistent behavior
         ),
         tts=cartesia.TTS(
-            voice="248be419-c632-4f23-adf1-5324ed7dbf1d",  # Friendly female voice
-            speed="normal",
-            emotion=["positivity:high", "curiosity:medium"],
+            voice="248be419-c632-4f23-adf1-5324ed7dbf1d",
         ),
     )
     
-    # Flag to track if we're closing
-    is_closing = False
-    
     # Event handlers for tracking conversation
-    @session.on("user_speech_committed")
-    def on_user_speech_committed(message):
-        """Called when user finishes speaking."""
-        nonlocal is_closing
+    @session.on("conversation_item_added")
+    def on_conversation_item_added(event):
+        """Called when a conversation item is added (user or agent)."""
+        item = event.item
         
-        print(f"\n[USER] {message.content}")
-        
-        # Add message and check if it's a closing signal
-        is_closing_signal = grievance_tracker.add_user_message(message.content)
-        
-        if is_closing_signal:
-            print("[SIGNAL] User indicated they're done talking")
-            is_closing = True
+        if item.role == "user":
+            # User message
+            text = item.text_content or ""
+            if text:
+                print(f"\n[USER] {text}")
+                grievance_tracker.add_user_message(text)
+        elif item.role == "assistant":
+            # Agent message - only print complete, non-interrupted messages
+            text = item.text_content or ""
+            if text and not item.interrupted:
+                print(f"[AGENT] {text}")
+                grievance_tracker.add_agent_message(text)
     
-    @session.on("agent_speech_committed")
-    def on_agent_speech_committed(message):
-        """Called when agent finishes speaking."""
-        print(f"[AGENT] {message.content}")
-        grievance_tracker.add_agent_message(message.content)
-        
-        # If this was the closing message, prepare to disconnect
-        if is_closing:
-            print("[CLOSING] Agent finished farewell. Scheduling disconnect...")
-            asyncio.create_task(disconnect_gracefully())
+    @session.on("function_calls_finished")
+    def on_function_calls_finished(called_functions):
+        """Called when LLM finishes executing function calls."""
+        for func in called_functions:
+            print(f"[FUNCTION] Completed: {func.call_info.function_info.name}")
     
-    @session.on("agent_speech_interrupted")
-    def on_agent_speech_interrupted(message):
-        """Called when user interrupts the agent."""
-        print(f"[INTERRUPTED] User interrupted agent")
+    print("[SESSION] Starting agent session...")
     
-    async def disconnect_gracefully():
-        """Disconnect from the room after a brief delay."""
-        await asyncio.sleep(2)  # Wait 2 seconds after closing message
+    # Start the session as a background task
+    session_task = asyncio.create_task(session.start(agent=agent, room=ctx.room))
+    
+    print("[SESSION] Waiting for participant to join...")
+    
+    # Wait for participant to join
+    while len(ctx.room.remote_participants) == 0:
+        await asyncio.sleep(1)
+    
+    print("[SESSION] Participant joined. Waiting for session to initialize...")
+    
+    # Wait for session to be ready - increased wait time
+    await asyncio.sleep(1)
+    
+    print("[SESSION] Sending initial greeting...")
+    
+    # Send initial greeting
+    try:
+        await session.generate_reply(
+            instructions="Give a brief, warm greeting and ask them to share their grievance. ONE sentence only."
+        )
+    except Exception as e:
+        print(f"[ERROR] Failed to generate greeting: {e}")
+    
+    print("[AGENT] Ready to collect grievances...")
+    
+    try:
+        # Wait only for the end_call signal
+        await should_end_call.wait()
         
+        print("[CLOSING] end_call triggered. Waiting for final message...")
+        
+        # Give enough time for the final message to be generated and spoken
+        # Most TTS responses complete within 3-4 seconds
+        await asyncio.sleep(7)
+        
+        print("[CLOSING] Proceeding with disconnect")
+        
+        # Now cancel the session
+        session_task.cancel()
+        try:
+            await session_task
+        except asyncio.CancelledError:
+            pass
+        
+    except asyncio.CancelledError:
+        print("[SESSION] Session cancelled")
+        session_task.cancel()
+        try:
+            await session_task
+        except asyncio.CancelledError:
+            pass
+    finally:
         # Print final grievance
         stats = grievance_tracker.get_stats()
         full_grievance = grievance_tracker.get_full_grievance()
@@ -215,37 +288,6 @@ async def entrypoint(ctx: JobContext):
         
         print("[DISCONNECT] Closing connection...")
         await ctx.room.disconnect()
-    
-    # Start the session
-    await session.start(agent=agent, room=ctx.room)
-    
-    print("[SESSION] Agent session started. Waiting for participant...")
-    
-    # Wait for participant to join before greeting
-    async def wait_for_participant():
-        """Wait for a participant to join before starting."""
-        while len(ctx.room.remote_participants) == 0:
-            await asyncio.sleep(0.1)
-        
-        print("[SESSION] Participant joined. Sending greeting...")
-        
-        # Send initial greeting after participant joins
-        await session.generate_reply(
-            instructions="Give a brief, warm greeting and ask them to share their grievance. ONE sentence only."
-        )
-    
-    asyncio.create_task(wait_for_participant())
-    
-    print("[AGENT] Ready to collect grievances...")
-    
-    # Monitor for manual disconnection
-    try:
-        # Keep running until disconnect is called
-        while ctx.room.connection_state == "connected":
-            await asyncio.sleep(0.5)
-    except asyncio.CancelledError:
-        pass
-    finally:
         print("[SESSION] Session ended")
 
 
