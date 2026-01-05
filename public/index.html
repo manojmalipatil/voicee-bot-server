@@ -37,223 +37,244 @@
         .custom-scrollbar::-webkit-scrollbar-track {
             background-color: transparent;
         }
+        
+        /* Ensure proper height calculations */
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        
+        /* Mobile responsive adjustments */
+        @media (max-width: 768px) {
+            .mobile-hide {
+                display: none;
+            }
+        }
     </style>
 </head>
-<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-white font-display min-h-screen flex flex-col overflow-hidden">
-    <header class="flex-none bg-white dark:bg-[#1e293b] border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex items-center justify-between z-20 shadow-sm">
-        <div class="flex items-center gap-4">
-            <div class="size-8 rounded bg-primary/10 flex items-center justify-center text-primary">
-                <span class="material-symbols-outlined text-2xl">security</span>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-white font-display h-full flex flex-col">
+    <!-- Header - Fixed -->
+    <header class="flex-none bg-white dark:bg-[#1e293b] border-b border-gray-200 dark:border-gray-700 px-4 md:px-6 py-3 md:py-4 flex items-center justify-between z-30 shadow-sm">
+        <div class="flex items-center gap-2 md:gap-4">
+            <div class="size-7 md:size-8 rounded bg-primary/10 flex items-center justify-center text-primary flex-shrink-0">
+                <span class="material-symbols-outlined text-xl md:text-2xl">security</span>
             </div>
             <div>
-                <h1 class="text-xl font-bold leading-tight tracking-tight text-slate-900 dark:text-white">Samasta Grievance Portal</h1>
-                <p class="text-xs text-gray-500 dark:text-gray-400 font-medium tracking-wide uppercase">HR Compliance &amp; Ethics Board</p>
+                <h1 class="text-base md:text-xl font-bold leading-tight tracking-tight text-slate-900 dark:text-white">Samasta Grievance Portal</h1>
+                <p class="text-[10px] md:text-xs text-gray-500 dark:text-gray-400 font-medium tracking-wide uppercase">HR Compliance &amp; Ethics Board</p>
             </div>
         </div>
-        <div class="flex items-center gap-4">
-            <div class="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-800">
+        <div class="flex items-center gap-2 md:gap-4">
+            <div class="hidden sm:flex items-center gap-2 px-2 md:px-3 py-1 md:py-1.5 rounded-full bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-800">
                 <div class="size-2 rounded-full bg-green-500 animate-pulse"></div>
-                <span class="text-xs font-bold text-green-700 dark:text-green-400 uppercase tracking-wider">System Operational</span>
+                <span class="text-[10px] md:text-xs font-bold text-green-700 dark:text-green-400 uppercase tracking-wider">System Operational</span>
             </div>
-            <div class="h-8 w-px bg-gray-200 dark:bg-gray-700 mx-2"></div>
-            <div class="flex items-center gap-3 bg-gray-100 dark:bg-gray-800 px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700">
-                <span class="material-symbols-outlined text-primary text-[20px]">lock</span>
+            <div class="hidden sm:block h-8 w-px bg-gray-200 dark:bg-gray-700"></div>
+            <div class="flex items-center gap-2 md:gap-3 bg-gray-100 dark:bg-gray-800 px-2 md:px-4 py-1.5 md:py-2 rounded-lg border border-gray-200 dark:border-gray-700">
+                <span class="material-symbols-outlined text-primary text-base md:text-[20px]">lock</span>
                 <div class="flex flex-col">
-                    <span class="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 leading-none mb-0.5">Secure Session</span>
-                    <span class="text-sm font-bold leading-none">Admin_ID_8842</span>
+                    <span class="text-[9px] md:text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 leading-none mb-0.5">Secure Session</span>
+                    <span class="text-xs md:text-sm font-bold leading-none">Admin_8842</span>
                 </div>
             </div>
-            <button class="flex items-center justify-center rounded-lg h-10 w-10 bg-primary/10 hover:bg-primary/20 text-primary transition-colors">
-                <span class="material-symbols-outlined">logout</span>
+            <button class="flex items-center justify-center rounded-lg h-8 w-8 md:h-10 md:w-10 bg-primary/10 hover:bg-primary/20 text-primary transition-colors" id="toggleSidebar">
+                <span class="material-symbols-outlined text-xl md:text-2xl">menu</span>
             </button>
         </div>
     </header>
-    
-    <div class="flex flex-1 overflow-hidden">
-        <main class="flex-1 flex flex-col overflow-y-auto custom-scrollbar p-6 lg:p-8 gap-8">
-            <section class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <!-- Total Grievances Card -->
-                <div class="bg-white dark:bg-[#1e293b] rounded-xl border border-gray-200 dark:border-gray-700 p-6 shadow-sm flex flex-col h-full">
-                    <div class="flex items-center justify-between mb-4">
-                        <h3 class="text-base font-bold text-gray-900 dark:text-white">Grievance Volume (30d)</h3>
-                        <span class="bg-primary/10 text-primary text-xs font-bold px-2 py-1 rounded">+12% vs last 30d</span>
-                    </div>
-                    <div class="flex items-end gap-2 mb-2">
-                        <span class="text-4xl font-black text-gray-900 dark:text-white tracking-tight">142</span>
-                        <span class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1.5">Total Cases</span>
-                    </div>
-                    <div class="flex-1 w-full min-h-[100px] relative mt-2">
-                        <svg class="w-full h-full absolute inset-0" preserveAspectRatio="none" viewBox="0 0 400 120">
-                            <defs>
-                                <linearGradient id="chartGradient" x1="0" x2="0" y1="0" y2="1">
-                                    <stop offset="0%" stop-color="#2563eb" stop-opacity="0.2"></stop>
-                                    <stop offset="100%" stop-color="#2563eb" stop-opacity="0"></stop>
-                                </linearGradient>
-                            </defs>
-                            <path d="M0,80 Q40,90 80,60 T160,50 T240,70 T320,40 T400,60 V120 H0 Z" fill="url(#chartGradient)"></path>
-                            <path d="M0,80 Q40,90 80,60 T160,50 T240,70 T320,40 T400,60" fill="none" stroke="#2563eb" stroke-linecap="round" stroke-linejoin="round" stroke-width="3"></path>
-                        </svg>
-                    </div>
-                    <div class="flex justify-between text-xs text-gray-400 font-medium mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
-                        <span>Wk 1</span>
-                        <span>Wk 2</span>
-                        <span>Wk 3</span>
-                        <span>Today</span>
-                    </div>
-                </div>
 
-                <!-- Top Category Card -->
-                <div class="bg-white dark:bg-[#1e293b] rounded-xl border border-gray-200 dark:border-gray-700 p-6 shadow-sm flex flex-col justify-between h-full relative overflow-hidden group">
-                    <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                        <span class="material-symbols-outlined text-8xl text-primary">category</span>
-                    </div>
-                    <div>
-                        <h3 class="text-base font-bold text-gray-900 dark:text-white mb-1">Top Category</h3>
-                        <p class="text-sm text-gray-500 dark:text-gray-400">Highest volume of reports</p>
-                    </div>
-                    <div class="mt-6">
-                        <p class="text-3xl font-black text-gray-900 dark:text-white leading-tight tracking-tight">Workplace<br/>Environment</p>
-                        <div class="flex items-center gap-2 mt-3">
-                            <span class="flex h-2 w-2 rounded-full bg-orange-500"></span>
-                            <p class="text-sm font-medium text-gray-600 dark:text-gray-300">45 Active Cases</p>
+    <!-- Main Content Area -->
+    <div class="flex-1 flex overflow-hidden relative">
+        <!-- Main Content - Scrollable -->
+        <main class="flex-1 overflow-y-auto custom-scrollbar">
+            <div class="p-4 md:p-6 lg:p-8 space-y-6 md:space-y-8">
+                <!-- Stats Cards Grid -->
+                <section class="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
+                    <!-- Total Grievances Card -->
+                    <div class="bg-white dark:bg-[#1e293b] rounded-xl border border-gray-200 dark:border-gray-700 p-4 md:p-6 shadow-sm">
+                        <div class="flex items-center justify-between mb-3 md:mb-4">
+                            <h3 class="text-sm md:text-base font-bold text-gray-900 dark:text-white">Grievance Volume (30d)</h3>
+                            <span class="bg-primary/10 text-primary text-[10px] md:text-xs font-bold px-2 py-1 rounded">+12%</span>
                         </div>
-                    </div>
-                    <div class="w-full bg-gray-100 dark:bg-gray-700 h-1.5 mt-4 rounded-full overflow-hidden">
-                        <div class="bg-primary h-full rounded-full" style="width: 65%"></div>
-                    </div>
-                </div>
-
-                <!-- Resolution Status Card -->
-                <div class="bg-white dark:bg-[#1e293b] rounded-xl border border-gray-200 dark:border-gray-700 p-6 shadow-sm flex flex-col h-full">
-                    <h3 class="text-base font-bold text-gray-900 dark:text-white mb-4">Resolution Status</h3>
-                    <div class="flex items-center gap-6 h-full">
-                        <div class="relative size-32 flex-none">
-                            <svg class="size-full rotate-[-90deg]" viewBox="0 0 36 36">
-                                <path class="text-gray-100 dark:text-gray-700" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-width="4.5"></path>
-                                <path class="text-emerald-500" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-dasharray="20, 100" stroke-width="4.5"></path>
-                                <path class="text-amber-400" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-dasharray="40, 100" stroke-dashoffset="-20" stroke-width="4.5"></path>
-                                <path class="text-primary" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-dasharray="40, 100" stroke-dashoffset="-60" stroke-width="4.5"></path>
+                        <div class="flex items-end gap-2 mb-2">
+                            <span class="text-3xl md:text-4xl font-black text-gray-900 dark:text-white tracking-tight">2</span>
+                            <span class="text-xs md:text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Total Cases</span>
+                        </div>
+                        <div class="w-full h-20 md:h-24 relative mt-2">
+                            <svg class="w-full h-full" preserveAspectRatio="none" viewBox="0 0 400 120">
+                                <defs>
+                                    <linearGradient id="chartGradient" x1="0" x2="0" y1="0" y2="1">
+                                        <stop offset="0%" stop-color="#2563eb" stop-opacity="0.2"></stop>
+                                        <stop offset="100%" stop-color="#2563eb" stop-opacity="0"></stop>
+                                    </linearGradient>
+                                </defs>
+                                <path d="M0,80 Q40,90 80,60 T160,50 T240,70 T320,40 T400,60 V120 H0 Z" fill="url(#chartGradient)"></path>
+                                <path d="M0,80 Q40,90 80,60 T160,50 T240,70 T320,40 T400,60" fill="none" stroke="#2563eb" stroke-linecap="round" stroke-linejoin="round" stroke-width="3"></path>
                             </svg>
-                            <div class="absolute inset-0 flex flex-col items-center justify-center">
-                                <span class="text-2xl font-bold text-gray-900 dark:text-white">68%</span>
-                                <span class="text-[10px] uppercase font-bold text-gray-400">Resolved</span>
-                            </div>
                         </div>
-                        <div class="flex flex-col justify-center gap-3 w-full">
-                            <div class="flex items-center justify-between">
-                                <div class="flex items-center gap-2">
-                                    <div class="size-3 rounded-full bg-primary"></div>
-                                    <span class="text-sm font-medium text-gray-600 dark:text-gray-300">Open</span>
-                                </div>
-                                <span class="text-sm font-bold text-gray-900 dark:text-white">42</span>
-                            </div>
-                            <div class="flex items-center justify-between">
-                                <div class="flex items-center gap-2">
-                                    <div class="size-3 rounded-full bg-amber-400"></div>
-                                    <span class="text-sm font-medium text-gray-600 dark:text-gray-300">Investigating</span>
-                                </div>
-                                <span class="text-sm font-bold text-gray-900 dark:text-white">35</span>
-                            </div>
-                            <div class="flex items-center justify-between">
-                                <div class="flex items-center gap-2">
-                                    <div class="size-3 rounded-full bg-emerald-500"></div>
-                                    <span class="text-sm font-medium text-gray-600 dark:text-gray-300">Resolved</span>
-                                </div>
-                                <span class="text-sm font-bold text-gray-900 dark:text-white">21</span>
-                            </div>
+                        <div class="flex justify-between text-[10px] md:text-xs text-gray-400 font-medium mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
+                            <span>Wk 1</span>
+                            <span>Wk 2</span>
+                            <span>Wk 3</span>
+                            <span>Today</span>
                         </div>
                     </div>
-                </div>
-            </section>
 
-            <!-- Grievance Table -->
-            <section class="flex-1 flex flex-col bg-white dark:bg-[#1e293b] rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
-                <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-                    <h2 class="text-lg font-bold text-gray-900 dark:text-white">Incoming Grievance Feed</h2>
-                    <div class="flex gap-3">
-                        <button class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
-                            <span class="material-symbols-outlined text-[18px]">filter_list</span>
-                            Filter
-                        </button>
-                        <button class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
-                            <span class="material-symbols-outlined text-[18px]">download</span>
-                            Export
-                        </button>
+                    <!-- Top Category Card -->
+                    <div class="bg-white dark:bg-[#1e293b] rounded-xl border border-gray-200 dark:border-gray-700 p-4 md:p-6 shadow-sm relative overflow-hidden group">
+                        <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <span class="material-symbols-outlined text-6xl md:text-8xl text-primary">category</span>
+                        </div>
+                        <div>
+                            <h3 class="text-sm md:text-base font-bold text-gray-900 dark:text-white mb-1">Top Category</h3>
+                            <p class="text-xs md:text-sm text-gray-500 dark:text-gray-400">Highest volume of reports</p>
+                        </div>
+                        <div class="mt-4 md:mt-6">
+                            <p class="text-2xl md:text-3xl font-black text-gray-900 dark:text-white leading-tight tracking-tight">Managerial</p>
+                            <div class="flex items-center gap-2 mt-2 md:mt-3">
+                                <span class="flex h-2 w-2 rounded-full bg-orange-500"></span>
+                                <p class="text-xs md:text-sm font-medium text-gray-600 dark:text-gray-300">1 Active Cases</p>
+                            </div>
+                        </div>
+                        <div class="w-full bg-gray-100 dark:bg-gray-700 h-1.5 mt-3 md:mt-4 rounded-full overflow-hidden">
+                            <div class="bg-primary h-full rounded-full" style="width: 65%"></div>
+                        </div>
                     </div>
-                </div>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left border-collapse">
-                        <thead>
-                            <tr class="bg-gray-50 dark:bg-[#0f172a] border-b border-gray-200 dark:border-gray-700">
-                                <th class="px-6 py-3 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider w-[130px]">Case Ref #</th>
-                                <th class="px-6 py-3 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Category</th>
-                                <th class="px-6 py-3 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Priority</th>
-                                <th class="px-6 py-3 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Location</th>
-                                <th class="px-6 py-3 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Sentiment</th>
-                                <th class="px-6 py-3 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Date / Time</th>
-                                <th class="px-6 py-3 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider w-[140px]">Status</th>
-                                <th class="px-6 py-3 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider w-[50px]"></th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
-                            <!-- Data will be populated by JavaScript -->
-                        </tbody>
-                    </table>
-                </div>
-            </section>
+
+                    <!-- Resolution Status Card -->
+                    <div class="bg-white dark:bg-[#1e293b] rounded-xl border border-gray-200 dark:border-gray-700 p-4 md:p-6 shadow-sm">
+                        <h3 class="text-sm md:text-base font-bold text-gray-900 dark:text-white mb-3 md:mb-4">Resolution Status</h3>
+                        <div class="flex items-center gap-4 md:gap-6">
+                            <div class="relative size-24 md:size-32 flex-none">
+                                <svg class="size-full rotate-[-90deg]" viewBox="0 0 36 36">
+                                    <path class="text-gray-100 dark:text-gray-700" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-width="4.5"></path>
+                                    <path class="text-emerald-500" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-dasharray="20, 100" stroke-width="4.5"></path>
+                                    <path class="text-amber-400" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-dasharray="40, 100" stroke-dashoffset="-20" stroke-width="4.5"></path>
+                                    <path class="text-primary" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-dasharray="40, 100" stroke-dashoffset="-60" stroke-width="4.5"></path>
+                                </svg>
+                                <div class="absolute inset-0 flex flex-col items-center justify-center">
+                                    <span class="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">68%</span>
+                                    <span class="text-[9px] md:text-[10px] uppercase font-bold text-gray-400">Resolved</span>
+                                </div>
+                            </div>
+                            <div class="flex flex-col justify-center gap-2 md:gap-3 flex-1">
+                                <div class="flex items-center justify-between">
+                                    <div class="flex items-center gap-2">
+                                        <div class="size-2 md:size-3 rounded-full bg-primary"></div>
+                                        <span class="text-xs md:text-sm font-medium text-gray-600 dark:text-gray-300">Open</span>
+                                    </div>
+                                    <span class="text-xs md:text-sm font-bold text-gray-900 dark:text-white">2</span>
+                                </div>
+                                <div class="flex items-center justify-between">
+                                    <div class="flex items-center gap-2">
+                                        <div class="size-2 md:size-3 rounded-full bg-amber-400"></div>
+                                        <span class="text-xs md:text-sm font-medium text-gray-600 dark:text-gray-300">Investigating</span>
+                                    </div>
+                                    <span class="text-xs md:text-sm font-bold text-gray-900 dark:text-white">35</span>
+                                </div>
+                                <div class="flex items-center justify-between">
+                                    <div class="flex items-center gap-2">
+                                        <div class="size-2 md:size-3 rounded-full bg-emerald-500"></div>
+                                        <span class="text-xs md:text-sm font-medium text-gray-600 dark:text-gray-300">Resolved</span>
+                                    </div>
+                                    <span class="text-xs md:text-sm font-bold text-gray-900 dark:text-white">21</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Grievance Table -->
+                <section class="bg-white dark:bg-[#1e293b] rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+                    <div class="px-4 md:px-6 py-3 md:py-4 border-b border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <h2 class="text-base md:text-lg font-bold text-gray-900 dark:text-white">Incoming Grievance Feed</h2>
+                        <div class="flex gap-2 md:gap-3">
+                            <button class="flex items-center gap-1.5 md:gap-2 px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+                                <span class="material-symbols-outlined text-base md:text-[18px]">filter_list</span>
+                                <span class="hidden sm:inline">Filter</span>
+                            </button>
+                            <button class="flex items-center gap-1.5 md:gap-2 px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+                                <span class="material-symbols-outlined text-base md:text-[18px]">download</span>
+                                <span class="hidden sm:inline">Export</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse min-w-[800px]">
+                            <thead>
+                                <tr class="bg-gray-50 dark:bg-[#0f172a] border-b border-gray-200 dark:border-gray-700">
+                                    <th class="px-3 md:px-6 py-2 md:py-3 text-[10px] md:text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Case Ref #</th>
+                                    <th class="px-3 md:px-6 py-2 md:py-3 text-[10px] md:text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Category</th>
+                                    <th class="px-3 md:px-6 py-2 md:py-3 text-[10px] md:text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Priority</th>
+                                    <th class="px-3 md:px-6 py-2 md:py-3 text-[10px] md:text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Location</th>
+                                    <th class="px-3 md:px-6 py-2 md:py-3 text-[10px] md:text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Sentiment</th>
+                                    <th class="px-3 md:px-6 py-2 md:py-3 text-[10px] md:text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Date / Time</th>
+                                    <th class="px-3 md:px-6 py-2 md:py-3 text-[10px] md:text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Status</th>
+                                    <th class="px-3 md:px-6 py-2 md:py-3"></th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+                                <!-- Data will be populated by JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
         </main>
 
-        <!-- Detail Panel -->
-        <aside class="w-[450px] bg-white dark:bg-[#1e293b] border-l border-gray-200 dark:border-gray-700 flex flex-col shadow-xl z-10">
-            <div class="px-6 py-5 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between bg-gray-50/50 dark:bg-[#1e293b]">
-                <div>
-                    <h2 class="text-lg font-bold text-gray-900 dark:text-white">Case Detail</h2>
-                    <p class="text-sm font-mono text-gray-500">REF: #ANON-8821</p>
+        <!-- Detail Panel Sidebar - Sliding on Mobile -->
+        <aside id="detailPanel" class="fixed lg:relative right-0 top-[57px] md:top-[65px] bottom-0 w-full sm:w-[400px] lg:w-[450px] bg-white dark:bg-[#1e293b] border-l border-gray-200 dark:border-gray-700 flex flex-col shadow-2xl lg:shadow-xl z-20 transform translate-x-full lg:translate-x-0 transition-transform duration-300">
+            <div class="px-4 md:px-6 py-4 md:py-5 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between bg-gray-50/50 dark:bg-[#1e293b]">
+                <div class="flex-1 min-w-0">
+                    <h2 class="text-base md:text-lg font-bold text-gray-900 dark:text-white">Case Detail</h2>
+                    <p class="text-xs md:text-sm font-mono text-gray-500 truncate">REF: #ANON-8821</p>
                 </div>
-                <div class="flex gap-2">
-                    <button class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
-                        <span class="material-symbols-outlined">print</span>
+                <div class="flex gap-2 ml-2">
+                    <button class="p-1.5 md:p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+                        <span class="material-symbols-outlined text-xl md:text-2xl">print</span>
                     </button>
-                    <button class="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
-                        <span class="material-symbols-outlined">close</span>
+                    <button id="closeSidebar" class="p-1.5 md:p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+                        <span class="material-symbols-outlined text-xl md:text-2xl">close</span>
                     </button>
                 </div>
             </div>
             
-            <div class="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
+            <div class="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-6 space-y-4 md:space-y-6">
                 <!-- Tags -->
                 <div>
                     <h3 class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Tags</h3>
                     <div class="flex flex-wrap gap-2">
-                        <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">#harassment</span>
-                        <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">#manager_misconduct</span>
-                        <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300 border border-red-100 dark:border-red-900/30">#urgent_review</span>
+                        <span class="inline-flex items-center px-2 md:px-2.5 py-1 rounded-md text-[10px] md:text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">#harassment</span>
+                        <span class="inline-flex items-center px-2 md:px-2.5 py-1 rounded-md text-[10px] md:text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">#manager_misconduct</span>
+                        <span class="inline-flex items-center px-2 md:px-2.5 py-1 rounded-md text-[10px] md:text-xs font-medium bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300 border border-red-100 dark:border-red-900/30">#urgent_review</span>
                     </div>
                 </div>
 
                 <!-- Case Summary -->
-                <div class="bg-blue-50 dark:bg-blue-900/10 rounded-lg p-4 border border-blue-100 dark:border-blue-900/30">
+                <div class="bg-blue-50 dark:bg-blue-900/10 rounded-lg p-3 md:p-4 border border-blue-100 dark:border-blue-900/30">
                     <div class="flex items-center gap-2 mb-2 text-blue-700 dark:text-blue-300">
-                        <span class="material-symbols-outlined text-lg">summarize</span>
+                        <span class="material-symbols-outlined text-base md:text-lg">summarize</span>
                         <h3 class="text-xs font-bold uppercase tracking-wider">Case Summary</h3>
                     </div>
-                    <p class="text-sm text-gray-700 dark:text-gray-300 leading-relaxed font-medium">
+                    <p class="text-xs md:text-sm text-gray-700 dark:text-gray-300 leading-relaxed font-medium">
                         Employee reports alleged bias in overtime allocation by <span class="bg-blue-200 dark:bg-blue-800 text-blue-800 dark:text-blue-100 px-1 rounded text-xs">Manager</span>. Incident involved a verbal altercation creating a hostile environment.
                     </p>
                     <div class="mt-3 pt-3 border-t border-blue-200 dark:border-blue-800/30 flex justify-between items-center">
-                        <span class="text-xs font-bold text-gray-500 dark:text-gray-400">AI Confidence: 94%</span>
-                        <span class="text-xs font-bold text-primary">Urgency: High</span>
+                        <span class="text-[10px] md:text-xs font-bold text-gray-500 dark:text-gray-400">AI Confidence: 94%</span>
+                        <span class="text-[10px] md:text-xs font-bold text-primary">Urgency: High</span>
                     </div>
                 </div>
 
                 <!-- Transcript -->
                 <div>
-                    <h3 class="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wider mb-3 flex items-center gap-2">
-                        <span class="material-symbols-outlined text-gray-400 text-lg">description</span>
+                    <h3 class="text-xs md:text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wider mb-3 flex items-center gap-2">
+                        <span class="material-symbols-outlined text-gray-400 text-base md:text-lg">description</span>
                         Anonymized Transcript
                     </h3>
-                    <div class="bg-gray-50 dark:bg-black/20 rounded-lg p-5 text-sm leading-relaxed text-gray-700 dark:text-gray-300 border border-gray-100 dark:border-gray-700 font-serif">
-                        <p class="mb-4">
+                    <div class="bg-gray-50 dark:bg-black/20 rounded-lg p-3 md:p-5 text-xs md:text-sm leading-relaxed text-gray-700 dark:text-gray-300 border border-gray-100 dark:border-gray-700 font-serif">
+                        <p class="mb-3 md:mb-4">
                             "I am writing to report an ongoing issue with <span class="bg-gray-300 dark:bg-gray-700 text-transparent select-none rounded px-1 text-[10px] align-middle">[REDACTED NAME]</span> regarding the allocation of overtime shifts. It appears that there is a bias towards certain team members."
                         </p>
                         <p>
@@ -264,44 +285,84 @@
 
                 <!-- Action Center -->
                 <div>
-                    <h3 class="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wider mb-3 flex items-center gap-2">
-                        <span class="material-symbols-outlined text-gray-400 text-lg">gavel</span>
+                    <h3 class="text-xs md:text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wider mb-3 flex items-center gap-2">
+                        <span class="material-symbols-outlined text-gray-400 text-base md:text-lg">gavel</span>
                         Action Center
                     </h3>
-                    <div class="space-y-4">
+                    <div class="space-y-3 md:space-y-4">
                         <div>
                             <label class="block text-xs font-medium text-gray-500 mb-1.5">Update Status</label>
-                            <div class="relative">
-                                <select class="block w-full rounded-lg border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm focus:border-primary focus:ring-primary sm:text-sm py-2.5">
-                                    <option>Open</option>
-                                    <option selected>Investigating</option>
-                                    <option>Resolved - Action Taken</option>
-                                    <option>Resolved - Dismissed</option>
-                                </select>
-                            </div>
+                            <select class="block w-full rounded-lg border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm focus:border-primary focus:ring-primary text-xs md:text-sm py-2 md:py-2.5">
+                                <option>Open</option>
+                                <option selected>Investigating</option>
+                                <option>Resolved - Action Taken</option>
+                                <option>Resolved - Dismissed</option>
+                            </select>
                         </div>
                         <div>
                             <label class="block text-xs font-medium text-gray-500 mb-1.5">Internal Notes (Logged securely)</label>
-                            <textarea class="block w-full rounded-lg border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm focus:border-primary focus:ring-primary sm:text-sm resize-none p-3" placeholder="Log internal actions taken without linking to specific individuals..." rows="4"></textarea>
+                            <textarea class="block w-full rounded-lg border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm focus:border-primary focus:ring-primary text-xs md:text-sm resize-none p-2 md:p-3" placeholder="Log internal actions taken without linking to specific individuals..." rows="3"></textarea>
                         </div>
-                        <button class="w-full flex justify-center items-center gap-2 py-2.5 px-4 border border-transparent rounded-lg shadow-sm text-sm font-bold text-white bg-primary hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-all">
-                            <span class="material-symbols-outlined text-[18px]">save</span>
+                        <button class="w-full flex justify-center items-center gap-2 py-2 md:py-2.5 px-4 border border-transparent rounded-lg shadow-sm text-xs md:text-sm font-bold text-white bg-primary hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-all">
+                            <span class="material-symbols-outlined text-base md:text-[18px]">save</span>
                             Save &amp; Update Case
                         </button>
                     </div>
                 </div>
             </div>
             
-            <div class="p-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#1e293b]">
-                <p class="text-xs text-center text-gray-400">
-                    <span class="material-symbols-outlined text-[14px] align-bottom mr-1">lock_clock</span>
+            <div class="p-3 md:p-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#1e293b]">
+                <p class="text-[10px] md:text-xs text-center text-gray-400">
+                    <span class="material-symbols-outlined text-xs md:text-[14px] align-bottom mr-1">lock_clock</span>
                     Last updated by Admin_ID_8842 at 14:15
                 </p>
             </div>
         </aside>
+
+        <!-- Overlay for mobile sidebar -->
+        <div id="sidebarOverlay" class="fixed inset-0 bg-black bg-opacity-50 z-10 lg:hidden hidden"></div>
     </div>
 
     <!-- Include Dashboard JavaScript -->
     <script src="dashboard.js"></script>
+    <script>
+        // Sidebar toggle functionality
+        const toggleBtn = document.getElementById('toggleSidebar');
+        const closeBtn = document.getElementById('closeSidebar');
+        const sidebar = document.getElementById('detailPanel');
+        const overlay = document.getElementById('sidebarOverlay');
+        
+        function openSidebar() {
+            sidebar.classList.remove('translate-x-full');
+            overlay.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        }
+        
+        function closeSidebar() {
+            sidebar.classList.add('translate-x-full');
+            overlay.classList.add('hidden');
+            document.body.style.overflow = '';
+        }
+        
+        toggleBtn.addEventListener('click', openSidebar);
+        closeBtn.addEventListener('click', closeSidebar);
+        overlay.addEventListener('click', closeSidebar);
+        
+        // Close sidebar on window resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth >= 1024) {
+                document.body.style.overflow = '';
+                overlay.classList.add('hidden');
+            }
+        });
+        
+        // Make table rows clickable to open sidebar on mobile
+        document.addEventListener('click', (e) => {
+            const row = e.target.closest('tbody tr');
+            if (row && window.innerWidth < 1024) {
+                openSidebar();
+            }
+        });
+    </script>
 </body>
 </html>
