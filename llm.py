@@ -15,7 +15,11 @@ from livekit.agents import (
     cli,
     function_tool,
 )
+<<<<<<< HEAD
 from livekit.plugins import deepgram, inworld, groq, silero
+=======
+from livekit.plugins import deepgram, cartesia, groq, silero
+>>>>>>> 0c702135ef6be3ce7487a39eab3f0d646f9364a6
 
 load_dotenv()
 
@@ -193,9 +197,14 @@ async def entrypoint(ctx: JobContext):
             model="llama-3.3-70b-versatile",
             temperature=0.7,
         ),
+<<<<<<< HEAD
         tts=inworld.TTS(
             voice="Riya",  # Replace with actual voice ID from Inworld Playground
             model="inworld-tts-1",  # or "inworld-tts-1-max" for higher quality
+=======
+        tts=cartesia.TTS(
+            voice="248be419-c632-4f23-adf1-5324ed7dbf1d",
+>>>>>>> 0c702135ef6be3ce7487a39eab3f0d646f9364a6
         ),
     )
     
