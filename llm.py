@@ -1,5 +1,8 @@
 import asyncio
 import os
+import sqlite3
+import uuid
+from datetime import datetime
 from dotenv import load_dotenv
 
 # LiveKit Imports
@@ -16,72 +19,84 @@ from livekit.plugins import deepgram, cartesia, groq, silero
 
 load_dotenv()
 
-# Enhanced system prompt with exit handling
-SYSTEM_INSTRUCTIONS = """You are a professional and empathetic employee grievance collection agent named "HR Voice Assistant". Your primary goal is to collect employee grievances thoroughly and compassionately.
+# --- Database Manager ---
+class DatabaseManager:
+    def __init__(self, db_path="grievance.db"):
+        self.db_path = db_path
+        self.init_db()
 
-⚠️ CRITICAL INSTRUCTION: You are collecting a FORMAL GRIEVANCE RECORD. You MUST collect ALL THREE pieces of required information before ending the call. This is NON-NEGOTIABLE.
+    def init_db(self):
+        """Initialize the database table if it doesn't exist."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Create table with specific columns
+        # Note: status defaults to 'pending', others are nullable for post-processing
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS grievances (
+                id TEXT PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                transcript TEXT NOT NULL,
+                category TEXT,
+                priority TEXT,
+                sentiment TEXT,
+                summary TEXT,
+                tags TEXT,
+                created_at TEXT NOT NULL,
+                location TEXT,
+                status TEXT DEFAULT 'pending'
+            )
+        """)
+        conn.commit()
+        conn.close()
 
-REQUIRED INFORMATION CHECKLIST:
-You MUST have ALL THREE before calling end_call:
-1. ✓ GRIEVANCE: Detailed description of the issue
-2. ✓ LOCATION: Where it occurred (floor, building, office, etc.)
-3. ✓ DEPARTMENT: Which department/team they work in
+    def save_grievance(self, transcript: str):
+        """Save the transcript, generating ID and timestamps automatically."""
+        if not transcript.strip():
+            print("[DB] Transcript is empty, skipping save.")
+            return
 
-CONVERSATION FLOW:
-1. Greet warmly (1 sentence): "Hello! When you're ready, please share your grievance."
-2. Listen to their grievance - let them speak completely
-3. After they finish, CHECK your checklist:
-   - Do I have the grievance details? 
-   - Do I have the location?
-   - Do I have the department?
-4. If ANY item is missing, ask: "To complete the record, which department are you in and where did this happen?"
-5. Only after ALL THREE items are collected AND user says they're done, end the call
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
 
-EXAMPLES OF INCOMPLETE GRIEVANCES (MUST CONTINUE):
+        record_id = str(uuid.uuid4())
+        current_time = datetime.now().isoformat()
 
-❌ INCOMPLETE Example 1:
-User: "I'm getting harassed in my office."
-Missing: Department, Location details, More context
-YOUR RESPONSE: "I'm so sorry to hear that. Could you tell me more about what's happening? Also, which department are you in and where specifically is this occurring?"
-DO NOT call end_call - information is incomplete!
+        try:
+            # We only insert id, timestamp, transcript, and created_at
+            # 'status' will auto-fill to 'pending'
+            # All other columns remain NULL for post-processing
+            cursor.execute("""
+                INSERT INTO grievances (id, timestamp, transcript, created_at)
+                VALUES (?, ?, ?, ?)
+            """, (record_id, current_time, transcript, current_time))
+            
+            conn.commit()
+            print(f"[DB] Successfully saved grievance ID: {record_id}")
+        except Exception as e:
+            print(f"[DB] Error saving grievance: {e}")
+        finally:
+            conn.close()
 
-❌ INCOMPLETE Example 2:
-User: "The washrooms are dirty."
-Missing: Department, Specific location
-YOUR RESPONSE: "I understand. Which floor or area are the washrooms on, and which department are you in?"
-DO NOT call end_call - information is incomplete!
+# --- Existing System Prompt ---
+SYSTEM_INSTRUCTIONS = """You are "HR Voice Assistant," a professional, empathetic grievance collector. Your goal is to record grievances efficiently without offering advice or solutions.
 
-✅ COMPLETE Example:
-User: "The air conditioning in the 3rd floor west wing office isn't working. It's been broken for a week. I'm in the Finance department."
-User: "That's all."
-Has: Grievance (AC broken), Location (3rd floor west wing), Department (Finance), User confirmed done
-YOUR RESPONSE: "Thank you for sharing this. Your grievance has been recorded and will be reviewed by our team. Take care."
-NOW call end_call - all information collected!
+CORE BEHAVIORS:
+- **Style:** Warm but concise (max 2 sentences). Use natural, minimal acknowledgments ("I see," "Please go on").
+- **Required Data:** You must collect: 1) The Grievance, 2) Location, and 3) Department.
+- **Missing Info:** If the user omits Location or Department, ask for them naturally *once* (e.g., "To complete the record, could you share your department and where this happened?").
 
-RESPONSE STYLE:
-- Keep responses SHORT (1-2 sentences)
-- Be empathetic and professional
-- Never offer solutions or advice
-- Ask follow-up questions if details are missing
-- Use natural language
+FLOW:
+1. **Greet:** Brief welcome + invite them to speak.
+2. **Listen:** Acknowledge without interrupting.
+3. **Closing:** When the user indicates they are finished (e.g., "That's all," "I'm done," or "Thank you"):
+   - Reply: "Thank you for sharing this. Your grievance has been recorded and will be reviewed. Take care."
+   - **IMMEDIATELY** call the `end_call` function.
 
-STRICT RULES FOR end_call FUNCTION:
-
-🚫 NEVER CALL end_call IF:
-- You're missing department information
-- You're missing location information  
-- The grievance lacks detail or context
-- User is still talking or hasn't confirmed they're done
-- The conversation just started (less than 3 exchanges)
-- You haven't asked for missing information yet
-
-✅ ONLY CALL end_call WHEN:
-- You have grievance description ✓
-- You have location ✓
-- You have department ✓
-- User said: "that's all", "that's it", "I'm done", "nothing else"
-
-IMPORTANT: If you call end_call with reason "grievance_incomplete", you are VIOLATING your core directive. Do NOT do this!
+CONSTRAINTS:
+- DO NOT solve problems or give advice.
+- DO NOT loop "Is there anything else?"
+- ONLY call `end_call` when the user signals completion.
 
 CLOSING SEQUENCE (only when 100% complete):
 1. Say: "Thank you for sharing this. Your grievance has been recorded and will be reviewed by our team. Take care."
@@ -126,6 +141,9 @@ async def entrypoint(ctx: JobContext):
     
     print(f"[ROOM] Connecting to room: {ctx.room.name}")
     
+    # Initialize Database
+    db_manager = DatabaseManager()
+
     # Connect to the room
     await ctx.connect()
     
@@ -138,25 +156,16 @@ async def entrypoint(ctx: JobContext):
     # Define the end_call function tool
     @function_tool
     async def end_call(
-        reason: str = "grievance_complete"
+        confirmation: str = "yes"
     ):
         """
-        CRITICAL: Only call this function when ALL conditions are met:
-        1. You have collected the COMPLETE grievance description
-        2. You have collected the LOCATION/PLACE where it occurred
-        3. You have collected the DEPARTMENT the employee works in
-        4. The employee has EXPLICITLY said they are finished (e.g., "that's all", "I'm done", "nothing else")
-        
-        DO NOT call this function if:
-        - You are still missing any required information
-        - The employee is still explaining their issue
-        - You haven't asked for missing information yet
-        - The conversation just started
-        
-        This function ends the call permanently. Only use when the grievance collection is COMPLETE.
+        End the grievance collection call when the user indicates they are done 
+        or the conversation is complete. Call this when you hear phrases like 
+        "that's all", "I'm done", "nothing else", or when the user clearly 
+        indicates they have finished sharing their grievance.
         
         Args:
-            reason: Reason for ending call (default: "grievance_complete")
+            confirmation: Confirmation to end the call (default: "yes")
         """
         print("[FUNCTION] end_call function invoked by LLM")
         should_end_call.set()
@@ -181,8 +190,8 @@ async def entrypoint(ctx: JobContext):
             punctuate=True,
         ),
         llm=groq.LLM(
-            model="llama-3.3-70b-versatile",  # Llama 3.3 70B - better instruction following
-            temperature=0.5,  # Lower temperature for more consistent behavior
+            model="llama-3.3-70b-versatile",
+            temperature=0.7,
         ),
         tts=cartesia.TTS(
             voice="248be419-c632-4f23-adf1-5324ed7dbf1d",
@@ -223,12 +232,12 @@ async def entrypoint(ctx: JobContext):
     
     # Wait for participant to join
     while len(ctx.room.remote_participants) == 0:
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.1)
     
     print("[SESSION] Participant joined. Waiting for session to initialize...")
     
     # Wait for session to be ready - increased wait time
-    await asyncio.sleep(1)
+    await asyncio.sleep(1.5)
     
     print("[SESSION] Sending initial greeting...")
     
@@ -250,7 +259,7 @@ async def entrypoint(ctx: JobContext):
         
         # Give enough time for the final message to be generated and spoken
         # Most TTS responses complete within 3-4 seconds
-        await asyncio.sleep(7)
+        await asyncio.sleep(6.5)
         
         print("[CLOSING] Proceeding with disconnect")
         
@@ -283,8 +292,10 @@ async def entrypoint(ctx: JobContext):
         print(full_grievance)
         print("="*70 + "\n")
         
-        # TODO: Add storage logic here
-        # await store_grievance(full_grievance)
+        # --- DATABASE STORAGE LOGIC ---
+        print("[DB] Saving grievance to local database...")
+        db_manager.save_grievance(full_grievance)
+        # ------------------------------
         
         print("[DISCONNECT] Closing connection...")
         await ctx.room.disconnect()
