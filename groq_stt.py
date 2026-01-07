@@ -15,7 +15,7 @@ from livekit.agents import (
     cli,
     function_tool,
 )
-from livekit.plugins import sarvam, groq, silero
+from livekit.plugins import deepgram, inworld, groq, silero
 
 load_dotenv()
 
@@ -30,6 +30,8 @@ class DatabaseManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
+        # Create table with specific columns
+        # Note: status defaults to 'pending', others are nullable for post-processing
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS grievances (
                 id TEXT PRIMARY KEY,
@@ -61,6 +63,9 @@ class DatabaseManager:
         current_time = datetime.now().isoformat()
 
         try:
+            # We only insert id, timestamp, transcript, and created_at
+            # 'status' will auto-fill to 'pending'
+            # All other columns remain NULL for post-processing
             cursor.execute("""
                 INSERT INTO grievances (id, timestamp, transcript, created_at)
                 VALUES (?, ?, ?, ?)
@@ -73,54 +78,53 @@ class DatabaseManager:
         finally:
             conn.close()
 
-# --- Tamil System Prompt ---
-SYSTEM_INSTRUCTIONS = """நீங்கள் "HR Voice Assistant", ஒரு தொழில்முறை மற்றும் அனுதாபமுள்ள குறைதீர்ப்பு சேகரிப்பாளர். ஆலோசனை அல்லது தீர்வுகளை வழங்காமல் குறைகளை திறமையாக பதிவு செய்வதே உங்கள் இலக்கு.
+# --- Existing System Prompt ---
+SYSTEM_INSTRUCTIONS = """You are "HR Voice Assistant," a professional, empathetic grievance collector. Your goal is to record grievances efficiently without offering advice or solutions.
 
-முக்கிய நடத்தைகள்:
-- **பாணி:** அன்பானது ஆனால் சுருக்கமாக (அதிகபட்சம் 2 வாக்கியங்கள்). இயல்பான, குறைந்தபட்ச ஒப்புதல்களைப் பயன்படுத்துங்கள் ("புரிகிறது," "தொடர்ந்து சொல்லுங்கள்").
-- **தேவையான தகவல்:** நீங்கள் சேகரிக்க வேண்டும்: 1) குறைதீர்ப்பு, 2) இடம், மற்றும் 3) துறை.
-- **தவறிய தகவல்:** பயனர் இடம் அல்லது துறையைத் தவிர்த்தால், அவர்களிடம் இயல்பாக *ஒரு முறை* கேளுங்கள்.
+CORE BEHAVIORS:
+- **Style:** Warm but concise (max 2 sentences). Use natural, minimal acknowledgments ("I see," "Please go on").
+- **Required Data:** You must collect: 1) The Grievance, 2) Location, and 3) Department.
+- **Missing Info:** If the user omits Location or Department, ask for them naturally *once* (e.g., "To complete the record, could you share your department and where this happened?").
 
-ஓட்டம்:
-1. **வாழ்த்து:** சுருக்கமான வரவேற்பு + அவர்களை பேச அழைக்கவும்.
-2. **கேளுங்கள்:** இடையூறு இல்லாமல் ஒப்புக்கொள்ளுங்கள்.
-3. **முடிவு:** பயனர் அவர்கள் முடித்துவிட்டதாகக் குறிப்பிடும்போது (எ.கா. "அவ்வளவுதான்," "நான் முடித்துவிட்டேன்," அல்லது "நன்றி"):
-   - பதிலளிக்கவும்: "இதைப் பகிர்ந்ததற்கு நன்றி. உங்கள் குறைதீர்ப்பு பதிவு செய்யப்பட்டு மதிப்பாய்வு செய்யப்படும். கவனமாக இருங்கள்."
-   - **உடனடியாக** `end_call` செயல்பாட்டை அழைக்கவும்.
+FLOW:
+1. **Greet:** Brief welcome + invite them to speak.
+2. **Listen:** Acknowledge without interrupting.
+3. **Closing:** When the user indicates they are finished (e.g., "That's all," "I'm done," or "Thank you"):
+   - Reply: "Thank you for sharing this. Your grievance has been recorded and will be reviewed. Take care."
+   - **IMMEDIATELY** call the `end_call` function.
 
-கட்டுப்பாடுகள்:
-- சிக்கல்களைத் தீர்க்காதீர்கள் அல்லது ஆலோசனை வழங்காதீர்கள்.
-- "வேறு ஏதாவது உள்ளதா?" என்று மீண்டும் கேட்காதீர்கள்.
-- பயனர் முழுமையைக் குறிக்கும்போது மட்டுமே `end_call` ஐ அழைக்கவும்.
+CONSTRAINTS:
+- DO NOT solve problems or give advice.
+- DO NOT loop "Is there anything else?"
+- ONLY call `end_call` when the user signals completion.
 
-முடிவு வரிசை (100% முழுமையானதும் மட்டும்):
-1. கூறவும்: "இதைப் பகிர்ந்ததற்கு நன்றி. உங்கள் குறைதீர்ப்பு பதிவு செய்யப்பட்டு எங்கள் குழுவால் மதிப்பாய்வு செய்யப்படும். கவனமாக இருங்கள்."
-2. "grievance_complete" காரணத்துடன் end_call ஐ அழைக்கவும்
+CLOSING SEQUENCE (only when 100% complete):
+1. Say: "Thank you for sharing this. Your grievance has been recorded and will be reviewed by our team. Take care."
+2. Call end_call with reason "grievance_complete"
 
-நினைவில் கொள்ளுங்கள்: உங்கள் வேலை முழுமையான தகவலைச் சேகரிப்பது. பொறுமையாகவும் முழுமையாகவும் இருங்கள்."""
+Remember: Your job is to collect COMPLETE information. Be patient and thorough."""
 
 
 class GrievanceTracker:
     """Track grievance conversation and manage call state."""
     
     def __init__(self):
-        self.grievance_text = []  # Tamil transcript
+        self.grievance_text = []
         self.conversation_history = []
         self.word_count = 0
     
     def add_user_message(self, text: str):
-        """Add user message in Tamil."""
-        self.grievance_text.append(f"பணியாளர்: {text}")
+        """Add user message."""
+        self.grievance_text.append(f"Employee: {text}")
         self.conversation_history.append({"role": "user", "content": text})
         self.word_count += len(text.split())
-        print(f"[USER MESSAGE] {text[:100]}...")
     
     def add_agent_message(self, text: str):
         """Add agent message to history."""
         self.conversation_history.append({"role": "assistant", "content": text})
     
     def get_full_grievance(self) -> str:
-        """Get the complete grievance transcript in Tamil."""
+        """Get the complete grievance transcript."""
         return "\n".join(self.grievance_text)
     
     def get_stats(self) -> dict:
@@ -155,22 +159,25 @@ async def entrypoint(ctx: JobContext):
         confirmation: str = "yes"
     ):
         """
-        பயனர் முடித்துவிட்டதாகக் குறிப்பிடும்போது அல்லது உரையாடல் முடிந்தவுடன் குறைதீர்ப்பு சேகரிப்பு அழைப்பை முடிக்கவும்.
+        End the grievance collection call when the user indicates they are done 
+        or the conversation is complete. Call this when you hear phrases like 
+        "that's all", "I'm done", "nothing else", or when the user clearly 
+        indicates they have finished sharing their grievance.
         
         Args:
-            confirmation: அழைப்பை முடிக்க உறுதிப்படுத்தல் (இயல்புநிலை: "yes")
+            confirmation: Confirmation to end the call (default: "yes")
         """
         print("[FUNCTION] end_call function invoked by LLM")
         should_end_call.set()
-        return "அழைப்பு முடிவடைதல் தொடங்கப்பட்டது. குறைதீர்ப்பு பதிவு செய்யப்பட்டுள்ளது."
+        return "Call ending initiated. The grievance has been recorded."
     
-    # Create the agent with Tamil instructions
+    # Create the agent with enhanced instructions and function calling
     agent = Agent(
         instructions=SYSTEM_INSTRUCTIONS,
-        tools=[end_call],
+        tools=[end_call],  # Pass the function tool to the agent
     )
     
-    # Create agent session with Tamil language support
+    # Create agent session with optimized settings
     session = AgentSession(
         vad=silero.VAD.load(
             min_speech_duration=0.3,
@@ -178,16 +185,16 @@ async def entrypoint(ctx: JobContext):
         ),
         stt=groq.STT(
             model="whisper-large-v3-turbo",
-            language="ta",
+            language="en",
         ),
         llm=groq.LLM(
             model="llama-3.3-70b-versatile",
             temperature=0.7,
         ),
-        tts=sarvam.TTS(
-            target_language_code="ta-IN",
-            speaker="anushka",
-        )
+        tts=inworld.TTS(
+            voice="Riya",  # Replace with actual voice ID from Inworld Playground
+            model="inworld-tts-1",  # or "inworld-tts-1-max" for higher quality
+        ),
     )
     
     # Event handlers for tracking conversation
@@ -197,16 +204,16 @@ async def entrypoint(ctx: JobContext):
         item = event.item
         
         if item.role == "user":
-            # User message in Tamil
+            # User message
             text = item.text_content or ""
             if text:
-                print(f"\n[USER - தமிழ்] {text}")
+                print(f"\n[USER] {text}")
                 grievance_tracker.add_user_message(text)
         elif item.role == "assistant":
-            # Agent message
+            # Agent message - only print complete, non-interrupted messages
             text = item.text_content or ""
             if text and not item.interrupted:
-                print(f"[AGENT - தமிழ்] {text}")
+                print(f"[AGENT] {text}")
                 grievance_tracker.add_agent_message(text)
     
     @session.on("function_calls_finished")
@@ -228,20 +235,20 @@ async def entrypoint(ctx: JobContext):
     
     print("[SESSION] Participant joined. Waiting for session to initialize...")
     
-    # Wait for session to be ready
+    # Wait for session to be ready - increased wait time
     await asyncio.sleep(1.5)
     
     print("[SESSION] Sending initial greeting...")
     
-    # Send initial greeting in Tamil
+    # Send initial greeting
     try:
         await session.generate_reply(
-            instructions="சுருக்கமான, அன்பான வரவேற்பு கொடுத்து அவர்களின் குறைதீர்ப்பைப் பகிர்ந்து கொள்ளச் சொல்லுங்கள். ஒரே ஒரு வாக்கியம் மட்டும்."
+            instructions="Give a brief, warm greeting and ask them to share their grievance. ONE sentence only."
         )
     except Exception as e:
         print(f"[ERROR] Failed to generate greeting: {e}")
     
-    print("[AGENT] Ready to collect grievances in Tamil...")
+    print("[AGENT] Ready to collect grievances...")
     
     try:
         # Wait only for the end_call signal
@@ -250,6 +257,7 @@ async def entrypoint(ctx: JobContext):
         print("[CLOSING] end_call triggered. Waiting for final message...")
         
         # Give enough time for the final message to be generated and spoken
+        # Most TTS responses complete within 3-4 seconds
         await asyncio.sleep(6.5)
         
         print("[CLOSING] Proceeding with disconnect")
@@ -280,13 +288,13 @@ async def entrypoint(ctx: JobContext):
         print(f"User Messages: {stats['user_messages']}")
         print(f"Word Count: {stats['word_count']}")
         print("-"*70)
-        print("[TAMIL TRANSCRIPT]")
         print(full_grievance)
         print("="*70 + "\n")
         
-        # Save Tamil transcript to database
-        print("[DB] Saving Tamil transcript to database...")
+        # --- DATABASE STORAGE LOGIC ---
+        print("[DB] Saving grievance to local database...")
         db_manager.save_grievance(full_grievance)
+        # ------------------------------
         
         print("[DISCONNECT] Closing connection...")
         await ctx.room.disconnect()

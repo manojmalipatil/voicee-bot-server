@@ -15,7 +15,7 @@ from livekit.agents import (
     cli,
     function_tool,
 )
-from livekit.plugins import deepgram, cartesia, groq, silero
+from livekit.plugins import sarvam, groq, silero
 
 # Translation Import
 from deep_translator import GoogleTranslator
@@ -224,22 +224,18 @@ async def entrypoint(ctx: JobContext):
             min_speech_duration=0.3,
             min_silence_duration=0.8,
         ),
-        stt=deepgram.STT(
-            model="enhanced",  # Multi-language model
-            language="kn",  # Kannada language code
-            smart_format=True,
-            punctuate=True,
+        stt=groq.STT(
+            model="whisper-large-v3-turbo",
+            language="kn",
         ),
         llm=groq.LLM(
             model="llama-3.3-70b-versatile",
             temperature=0.7,
         ),
-        tts=cartesia.TTS(
-            model="sonic-3",
-            voice="248be419-c632-4f23-adf1-5324ed7dbf1d",  # Use Kannada voice if available
-            language="kn",  # Set TTS to Kannada
-            speed=1.0,
-        ),
+        tts=sarvam.TTS(
+            target_language_code="kn-IN",
+            speaker="anushka",
+        )
     )
     
     # Event handlers for tracking conversation
