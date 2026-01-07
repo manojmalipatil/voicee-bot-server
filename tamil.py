@@ -181,7 +181,7 @@ async def entrypoint(ctx: JobContext):
             language="ta",
         ),
         llm=groq.LLM(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-20b",
             temperature=0.7,
         ),
         tts=sarvam.TTS(
